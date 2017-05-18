@@ -14,6 +14,10 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <cuda_runtime.h>
+//#include <helper_cuda.h>
+//#include <helper_functions.h>
+
 #define _USE_MATH_DEFINES
 #include <cmath>
 
@@ -1030,11 +1034,24 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
 
 
 
-    void mcx_run_simulation(Config *cfg,GPUInfo *gpu, int stream_id){
+    //void mcx_run_simulation(Config *cfg,GPUInfo *gpu, cudaStream_t *streams, int stream_id){
+    void mcx_run_simulation(Config *cfg,GPUInfo *gpu){
 
         //
         // running cke version
         //
+
+		//printf("<LOG> run stream %d\n",stream_id);
+
+		int num_streams = 3;
+		cudaStream_t *streams = (cudaStream_t *) malloc(num_streams * sizeof(cudaStream_t));
+
+		for (int i = 0; i < num_streams; i++) {
+			cudaStreamCreate(&(streams[i]));
+		}
+
+
+
 
         int i,iter;
         float  minstep=1.f; //MIN(MIN(cfg->steps.x,cfg->steps.y),cfg->steps.z);
@@ -1174,6 +1191,10 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
         clgrid.y=cfg->dim.y;
         clblock.x=cfg->dim.z;
 
+		printf("\n<break point> debuglevel %d!\n", cfg->debuglevel);
+		printf("\n<break point> MCX_DEBUG_RNG %d!\n", MCX_DEBUG_RNG);
+		//printf("\n<break point> %d!\n", MCX_DEBUG_RNG & cfg->debuglevel);
+
         if(cfg->debuglevel & MCX_DEBUG_RNG){
 #pragma omp master
             {
@@ -1182,6 +1203,10 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
                 Pseed=(uint*)malloc(sizeof(RandType)*RAND_BUF_LEN);
                 for (i=0; i<(int)((sizeof(RandType)>>2)*RAND_BUF_LEN); i++)
                     Pseed[i]=rand();
+
+				printf("\n<break point>!\n");
+
+
                 CUDA_ASSERT(cudaMalloc((void **) &gPseed, sizeof(RandType)*RAND_BUF_LEN));
                 CUDA_ASSERT(cudaMemcpy(gPseed, Pseed, sizeof(RandType)*RAND_BUF_LEN,  cudaMemcpyHostToDevice));
 
@@ -1219,6 +1244,7 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
             return;
         }
 
+		// CPU Memory
         Ppos=(float4*)malloc(sizeof(float4)*gpu[gpuid].autothread);
         Pdir=(float4*)malloc(sizeof(float4)*gpu[gpuid].autothread);
         Plen=(float4*)malloc(sizeof(float4)*gpu[gpuid].autothread);
@@ -1230,7 +1256,14 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
         else
             Pseed=(uint*)malloc(sizeof(RandType)*cfg->nphoton*RAND_BUF_LEN);
 
+
+
+		// GPU Memory
+
+
         CUDA_ASSERT(cudaMalloc((void **) &gmedia, sizeof(uchar)*(dimxyz)));
+        CUDA_ASSERT(cudaMalloc((void **) &gmedia, sizeof(uchar)*(dimxyz)));
+
         //CUDA_ASSERT(cudaBindTexture(0, texmedia, gmedia));
         CUDA_ASSERT(cudaMalloc((void **) &gfield, sizeof(float)*fieldlen));
         CUDA_ASSERT(cudaMalloc((void **) &gPpos, sizeof(float4)*gpu[gpuid].autothread));
@@ -1337,6 +1370,9 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
         mcx_flush(cfg);
 
         CUDA_ASSERT(cudaMemcpy(gmedia, media, sizeof(uchar) *dimxyz, cudaMemcpyHostToDevice));
+
+
+
         CUDA_ASSERT(cudaMemcpy(genergy,energy,sizeof(float) *(gpu[gpuid].autothread<<1), cudaMemcpyHostToDevice));
         if(cfg->srcpattern)
             CUDA_ASSERT(cudaMemcpy(gsrcpattern,cfg->srcpattern,sizeof(float)*(int)(cfg->srcparam1.w*cfg->srcparam2.w), cudaMemcpyHostToDevice));
@@ -1405,22 +1441,31 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
                 MCX_FPRINTF(cfg->flog,"simulation run#%2d ... \n",iter+1); fflush(cfg->flog);
                 mcx_flush(cfg);
 
+
+				for(int stream_id = 0; stream_id < num_streams; stream_id++ )
+				{
+
+
+
                 switch(cfg->srctype) {
-                    case(MCX_SRC_PENCIL): mcx_main_loop<MCX_SRC_PENCIL> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
-                    case(MCX_SRC_ISOTROPIC): mcx_main_loop<MCX_SRC_ISOTROPIC> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
-                    case(MCX_SRC_CONE): mcx_main_loop<MCX_SRC_CONE> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
-                    case(MCX_SRC_GAUSSIAN): mcx_main_loop<MCX_SRC_GAUSSIAN> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
-                    case(MCX_SRC_PLANAR): mcx_main_loop<MCX_SRC_PLANAR> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
-                    case(MCX_SRC_PATTERN): mcx_main_loop<MCX_SRC_PATTERN> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
-                    case(MCX_SRC_FOURIER): mcx_main_loop<MCX_SRC_FOURIER> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
-                    case(MCX_SRC_ARCSINE): mcx_main_loop<MCX_SRC_ARCSINE> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
-                    case(MCX_SRC_DISK): mcx_main_loop<MCX_SRC_DISK> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
-                    case(MCX_SRC_FOURIERX): mcx_main_loop<MCX_SRC_FOURIERX> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
-                    case(MCX_SRC_FOURIERX2D): mcx_main_loop<MCX_SRC_FOURIERX2D> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
-                    case(MCX_SRC_ZGAUSSIAN): mcx_main_loop<MCX_SRC_ZGAUSSIAN> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
-                    case(MCX_SRC_LINE): mcx_main_loop<MCX_SRC_LINE> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
-                    case(MCX_SRC_SLIT): mcx_main_loop<MCX_SRC_SLIT> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
+                    case(MCX_SRC_PENCIL): mcx_main_loop<MCX_SRC_PENCIL> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
+                    case(MCX_SRC_ISOTROPIC): mcx_main_loop<MCX_SRC_ISOTROPIC> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
+                    case(MCX_SRC_CONE): mcx_main_loop<MCX_SRC_CONE> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
+                    case(MCX_SRC_GAUSSIAN): mcx_main_loop<MCX_SRC_GAUSSIAN> <<<mcgrid,mcblock,sharedbuf, streams[stream_id] >>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
+                    case(MCX_SRC_PLANAR): mcx_main_loop<MCX_SRC_PLANAR> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
+                    case(MCX_SRC_PATTERN): mcx_main_loop<MCX_SRC_PATTERN> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
+                    case(MCX_SRC_FOURIER): mcx_main_loop<MCX_SRC_FOURIER> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
+                    case(MCX_SRC_ARCSINE): mcx_main_loop<MCX_SRC_ARCSINE> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
+                    case(MCX_SRC_DISK): mcx_main_loop<MCX_SRC_DISK> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
+                    case(MCX_SRC_FOURIERX): mcx_main_loop<MCX_SRC_FOURIERX> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
+                    case(MCX_SRC_FOURIERX2D): mcx_main_loop<MCX_SRC_FOURIERX2D> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
+                    case(MCX_SRC_ZGAUSSIAN): mcx_main_loop<MCX_SRC_ZGAUSSIAN> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
+                    case(MCX_SRC_LINE): mcx_main_loop<MCX_SRC_LINE> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
+                    case(MCX_SRC_SLIT): mcx_main_loop<MCX_SRC_SLIT> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
                 }
+
+
+				}
 
 #pragma omp master
                 {
@@ -1629,6 +1674,12 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
         }
 #pragma omp barrier
 
+
+
+		for (int i = 0; i < num_streams; i++) {
+			cudaStreamDestroy(streams[i]);
+		}
+
         CUDA_ASSERT(cudaFree(gmedia));
         CUDA_ASSERT(cudaFree(gfield));
         CUDA_ASSERT(cudaFree(gPpos));
@@ -1650,6 +1701,7 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
         }
 
         CUDA_ASSERT(cudaDeviceReset());
+
 
         free(Ppos);
         free(Pdir);

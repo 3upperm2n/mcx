@@ -19,7 +19,7 @@ AR=$(CC)
 BINARY=mcx
 OUTPUT_DIR=../bin
 
-INCLUDEDIRS=-I/usr/local/cuda/include
+INCLUDEDIRS=-I/usr/local/cuda/include -I/usr/local/cuda/samples/common/inc
 
 CUDART=-lcudart
 CUOMPLINK=
@@ -173,7 +173,7 @@ $(OUTPUT_DIR)/$(BINARY): $(OBJS)
 	$(CC) $(INCLUDEDIRS) $(CPPOPT) -c -o $@  $<
 
 %$(OBJSUFFIX): %.cu
-	$(CUDACC) -c $(CUCCOPT) -o $@  $<
+	$(CUDACC) $(INCLUDEDIRS) -c $(CUCCOPT) -o $@  $<
 
 clean:
 	-rm -f $(OBJS) $(OUTPUT_DIR)/$(BINARY)$(EXESUFFIX) $(OUTPUT_DIR)/$(BINARY)_atomic$(EXESUFFIX) $(OUTPUT_DIR)/$(BINARY)_det$(EXESUFFIX)

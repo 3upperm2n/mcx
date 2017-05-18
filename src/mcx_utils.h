@@ -7,6 +7,11 @@
 #include "cjson/cJSON.h"
 #include "float.h"
 
+#include <cuda_runtime.h>
+//#include <helper_cuda.h>
+//#include <helper_functions.h>
+
+
 #define EPS                FLT_EPSILON                   //round-off limit
 #define VERY_BIG           (1.f/FLT_EPSILON)             //a big number
 
