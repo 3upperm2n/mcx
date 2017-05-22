@@ -50,22 +50,23 @@ int main (int argc, char *argv[]) {
 		// this launches the MC simulation
 
 
-		//int num_streams = 2;
-		//cudaStream_t *streams = (cudaStream_t *) malloc(num_streams * sizeof(cudaStream_t));
+		int num_streams = 2;
+		cudaStream_t *streams = (cudaStream_t *) malloc(num_streams * sizeof(cudaStream_t));
 
-		//for (int i = 0; i < num_streams; i++) {
-		//	cudaStreamCreate(&(streams[i]));
-		//}
+		for (int i = 0; i < num_streams; i++) {
+			cudaStreamCreate(&(streams[i]));
+		}
 
-		mcx_run_simulation(&mcxconfig,gpuinfo);
+		//mcx_run_simulation(&mcxconfig,gpuinfo);
 
-		//mcx_run_simulation(&mcxconfig,gpuinfo, streams, 0);
-		//mcx_run_simulation(&mcxconfig,gpuinfo, streams, 1);
+		for (int i = 0; i < num_streams; i++) {
+			mcx_run_simulation(&mcxconfig,gpuinfo, streams, i);
+		}
 
 
-		//for (int i = 0; i < num_streams; i++) {
-		//	cudaStreamDestroy(streams[i]);
-		//}
+		for (int i = 0; i < num_streams; i++) {
+			cudaStreamDestroy(streams[i]);
+		}
 
 
 #ifdef _OPENMP

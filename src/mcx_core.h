@@ -103,8 +103,8 @@ typedef struct  __align__(16) KernelParams {
   unsigned int maxjumpdebug;
 }MCXParam;
 
-void mcx_run_simulation(Config *cfg,GPUInfo *gpu);
-//void mcx_run_simulation(Config *cfg,GPUInfo *gpu, cudaStream_t* streams, int stream_id);
+//void mcx_run_simulation(Config *cfg,GPUInfo *gpu);
+void mcx_run_simulation(Config *cfg,GPUInfo *gpu, cudaStream_t* streams, int stream_id);
 
 int  mcx_list_gpu(Config *cfg, GPUInfo **info);
 

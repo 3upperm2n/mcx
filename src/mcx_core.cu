@@ -1034,21 +1034,15 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
 
 
 
-    //void mcx_run_simulation(Config *cfg,GPUInfo *gpu, cudaStream_t *streams, int stream_id){
-    void mcx_run_simulation(Config *cfg,GPUInfo *gpu){
+    void mcx_run_simulation(Config *cfg,GPUInfo *gpu, cudaStream_t *streams, int stream_id){
+    //void mcx_run_simulation(Config *cfg,GPUInfo *gpu){
 
         //
         // running cke version
         //
 
-		//printf("<LOG> run stream %d\n",stream_id);
+		printf("<LOG> run stream %d\n",stream_id);
 
-		int num_streams = 3;
-		cudaStream_t *streams = (cudaStream_t *) malloc(num_streams * sizeof(cudaStream_t));
-
-		for (int i = 0; i < num_streams; i++) {
-			cudaStreamCreate(&(streams[i]));
-		}
 
 
 
@@ -1442,10 +1436,6 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
                 mcx_flush(cfg);
 
 
-				for(int stream_id = 0; stream_id < num_streams; stream_id++ )
-				{
-
-
 
                 switch(cfg->srctype) {
                     case(MCX_SRC_PENCIL): mcx_main_loop<MCX_SRC_PENCIL> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
@@ -1464,8 +1454,6 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
                     case(MCX_SRC_SLIT): mcx_main_loop<MCX_SRC_SLIT> <<<mcgrid,mcblock,sharedbuf, streams[stream_id]>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,gseeddata,gdebugdata,gprogress); break;
                 }
 
-
-				}
 
 #pragma omp master
                 {
@@ -1676,9 +1664,6 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
 
 
 
-		for (int i = 0; i < num_streams; i++) {
-			cudaStreamDestroy(streams[i]);
-		}
 
         CUDA_ASSERT(cudaFree(gmedia));
         CUDA_ASSERT(cudaFree(gfield));
