@@ -1043,7 +1043,7 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
 
 		//printf("<LOG> run stream %d\n",stream_id);
 
-		int num_streams = 3;
+		int num_streams = 6;
 		cudaStream_t *streams = (cudaStream_t *) malloc(num_streams * sizeof(cudaStream_t));
 
 		for (int i = 0; i < num_streams; i++) {
