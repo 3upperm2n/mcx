@@ -24,6 +24,8 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 
+#include <cuda_fp16.h>
+
 #include "br2cu.h"
 #include "mcx_core.h"
 #include "tictoc.h"
@@ -162,10 +164,29 @@ __device__ inline float mcx_nextafterf(float a, int dir){
       return num.f-gcfg->maxvoidstep;
 }
 
-__device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,int *id){
+//__device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,int *id){
+__device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,int8_t *id){
       float dist, xi[3];
 
-      //time-of-flight to hit the wall in each direction
+      /*
+      htime[0]=fabs(__half2float(__hmul(__hsub(__hadd(__float2half(floorf(p0->x)),
+			      __float2half((v->x>0.f))),
+			  __float2half(p0->x)),
+		      __float2half(rv[0]))));
+
+      htime[1]=fabs(__half2float(__hmul(__hsub(__hadd(__float2half(floorf(p0->y)),
+			      __float2half((v->y>0.f))),
+			  __float2half(p0->y)),
+		      __float2half(rv[1]))));
+	
+      htime[2]=fabs(__half2float(__hmul(__hsub(__hadd(__float2half(floorf(p0->z)),
+			      __float2half((v->z>0.f))),
+			  __float2half(p0->z)),
+		      __float2half(rv[2]))));
+      */
+
+
+      ////time-of-flight to hit the wall in each direction
       htime[0]=fabs((floorf(p0->x)+(v->x>0.f)-p0->x)*rv[0]); // absolute distance of travel in x/y/z
       htime[1]=fabs((floorf(p0->y)+(v->y>0.f)-p0->y)*rv[1]);
       htime[2]=fabs((floorf(p0->z)+(v->z>0.f)-p0->z)*rv[2]);
@@ -190,7 +211,7 @@ __device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,in
       return dist;
 }
 
-__device__ inline void transmit(MCXdir *v, float n1, float n2,int flipdir){
+__device__ inline void transmit(MCXdir *v, float n1, float n2, int8_t flipdir){
       float tmp0=n1/n2;
       v->x*=tmp0;
       v->y*=tmp0;
@@ -202,7 +223,7 @@ __device__ inline void transmit(MCXdir *v, float n1, float n2,int flipdir){
 	      (v->z=sqrtf(1.f - v->x*v->x - v->y*v->y)*((v->z>0.f)-(v->z<0.f))));
 }
 
-__device__ inline float reflectcoeff(MCXdir *v, float n1, float n2, int flipdir){
+__device__ inline float reflectcoeff(MCXdir *v, float n1, float n2, int8_t flipdir){
       float Icos=fabs((flipdir==0) ? v->x : (flipdir==1 ? v->y : v->z));
       float tmp0=n1*n1;
       float tmp1=n2*n2;
@@ -233,7 +254,7 @@ __device__ inline int skipvoid(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,uint me
 	    if(media[idx1d] & MED_MASK){ // if inside
                 GPUDEBUG(("inside volume [%f %f %f] v=<%f %f %f>\n",p->x,p->y,p->z,v->x,v->y,v->z));
 	        float3 htime;
-                int flipdir;
+                int8_t flipdir;
                 p->x-=v->x;
                 p->y-=v->y;
                 p->z-=v->z;
@@ -615,7 +636,7 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 
      float len, slen;
      float w0,Lmove;
-     int   flipdir=-1;
+     int8_t   flipdir=-1;
  
      float *ppath=sharedmem+(blockDim.x<<2); // first blockDim.x<<2 stores v for all threads
 #ifdef  USE_CACHEBOX
