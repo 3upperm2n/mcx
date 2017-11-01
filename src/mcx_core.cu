@@ -246,7 +246,11 @@ __device__ inline float reflectcoeff(MCXdir *v, float n1, float n2, int8_t flipd
 in an void voxel, mcx advances the photon in v.{xyz} direction
 until it hits an non-zero voxel */
 __device__ inline int skipvoid(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,uint media[]){
-      int count=1,idx1d;
+      //int count=1,idx1d;
+      int count=1;
+	  //uint16_t idx1d;
+	  uint8_t idx1d;
+
       while(1){
           if(p->x>=0.f && p->y>=0.f && p->z>=0.f && p->x < gcfg->maxidx.x
                && p->y < gcfg->maxidx.y && p->z < gcfg->maxidx.z){
@@ -342,7 +346,9 @@ __device__ inline void rotatevector(MCXdir *v, float stheta, float ctheta, float
 }
 
 template <int mcxsource>
-__device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,Medium *prop,uint *idx1d,
+//__device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,Medium *prop,uint *idx1d,
+//__device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,Medium *prop,uint16_t *idx1d,
+__device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,Medium *prop,uint8_t *idx1d,
            uint *mediaid,float *w0,float *Lmove,uint isdet, float ppath[],float energyloss[],float energylaunched[],float n_det[],uint *dpnum,
 	   RandType t[RAND_BUF_LEN],RandType photonseed[RAND_BUF_LEN],
 	   uint media[],float srcpattern[],int threadid,RandType rngseed[],RandType seeddata[],float gdebugdata[],volatile int gprogress[]){
@@ -617,7 +623,10 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
      float  energyloss=genergy[idx<<1];
      float  energylaunched=genergy[(idx<<1)+1];
 
-     uint idx1d, idx1dold;   //idx1dold is related to reflection
+     //uint idx1d, idx1dold;   //idx1dold is related to reflection
+     //uint16_t idx1d[2];   // 0 : idx1d, 1: idx1dold
+     uint8_t idx1d[2];   // 0 : idx1d, 1: idx1dold
+
      uint moves=0;
 
 #ifdef TEST_RACING
@@ -657,7 +666,8 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 
      gpu_rng_init(t,n_seed,idx);
 
-     if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,0,ppath,&energyloss,
+     //if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,0,ppath,&energyloss,
+     if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d[0],&mediaid,&w0,&Lmove,0,ppath,&energyloss,
        &energylaunched,n_det,detectedphoton,t,photonseed,media,srcpattern,
        idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress)){
          GPUDEBUG(("thread %d: fail to launch photon\n",idx));
@@ -735,11 +745,14 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 #ifdef USE_ATOMIC
                             if(!gcfg->isatomic){
 #endif
-                                field[idx1d+tshift*gcfg->dimlen.z]+=replayweight[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)];
+                                //field[idx1d+tshift*gcfg->dimlen.z]+=replayweight[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)];
+                                field[idx1d[0]+tshift*gcfg->dimlen.z]+=replayweight[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)];
 #ifdef USE_ATOMIC
                             }else{
-                                atomicadd(& field[idx1d+tshift*gcfg->dimlen.z], replayweight[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)]);
-                                GPUDEBUG(("atomic write to [%d] %e, w=%f\n",idx1d,weight,p.w));
+                                //atomicadd(& field[idx1d+tshift*gcfg->dimlen.z], replayweight[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)]);
+                                atomicadd(& field[idx1d[0]+tshift*gcfg->dimlen.z], replayweight[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)]);
+                                //GPUDEBUG(("atomic write to [%d] %e, w=%f\n",idx1d,weight,p.w));
+                                GPUDEBUG(("atomic write to [%d] %e, w=%f\n",idx1d[0],weight,p.w));
                             }
 #endif
                        }
@@ -774,14 +787,21 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 #endif
 
           mediaidold=mediaid | isdet;
-          idx1dold=idx1d;
-          idx1d=(int(floorf(p.z))*gcfg->dimlen.y+int(floorf(p.y))*gcfg->dimlen.x+int(floorf(p.x)));
-          GPUDEBUG(("idx1d [%d]->[%d]\n",idx1dold,idx1d));
+          //idx1dold=idx1d;
+          idx1d[1]=idx1d[0];
+
+          //idx1d=(int(floorf(p.z))*gcfg->dimlen.y+int(floorf(p.y))*gcfg->dimlen.x+int(floorf(p.x)));
+          idx1d[0]=(int(floorf(p.z))*gcfg->dimlen.y+int(floorf(p.y))*gcfg->dimlen.x+int(floorf(p.x)));
+
+          //GPUDEBUG(("idx1d [%d]->[%d]\n",idx1dold,idx1d));
+          GPUDEBUG(("idx1d [%d]->[%d]\n",idx1d[1],idx1d[0]));
+
           if(p.x<0||p.y<0||p.z<0||p.x>=gcfg->maxidx.x||p.y>=gcfg->maxidx.y||p.z>=gcfg->maxidx.z){
 	      mediaid=0;
 	      isdet=0;
 	  }else{
-	      mediaid=media[idx1d];
+	      //mediaid=media[idx1d];
+	      mediaid=media[idx1d[0]];
 	      isdet=mediaid & DET_MASK;
 	      mediaid &= MED_MASK;
           }
@@ -789,7 +809,8 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 
           // saving fluence to the voxel when moving out
 
-	  if(idx1d!=idx1dold && mediaidold){
+	  //if(idx1d!=idx1dold && mediaidold){
+	  if(idx1d[0]!=idx1d[1] && mediaidold){
              // if t is within the time window, which spans cfg->maxgate*cfg->tstep.wide
              if(gcfg->save2pt && f.t>=gcfg->twin0 && f.t<gcfg->twin1){
 	          float weight=0.f;
@@ -805,12 +826,14 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 		  }else
 		      weight=(prop.mua==0.f) ? 0.f : ((w0-p.w)/(prop.mua));
 
-                  GPUDEBUG(("deposit to [%d] %e, w=%f\n",idx1dold,weight,p.w));
+                  //GPUDEBUG(("deposit to [%d] %e, w=%f\n",idx1dold,weight,p.w));
+                  GPUDEBUG(("deposit to [%d] %e, w=%f\n",idx1d[1],weight,p.w));
 
 #ifdef TEST_RACING
                   // enable TEST_RACING to determine how many missing accumulations due to race
                   if( (p.x-gcfg->ps.x)*(p.x-gcfg->ps.x)+(p.y-gcfg->ps.y)*(p.y-gcfg->ps.y)+(p.z-gcfg->ps.z)*(p.z-gcfg->ps.z)>gcfg->skipradius2) {
-                      field[idx1dold+tshift*gcfg->dimlen.z]+=1.f;
+                      //field[idx1dold+tshift*gcfg->dimlen.z]+=1.f;
+                      field[idx1d[1]+tshift*gcfg->dimlen.z]+=1.f;
 		      cc++;
                   }
 #else
@@ -831,22 +854,29 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
                           accumweight+=p.w*prop.mua; // weight*absorption
   #endif
                       }else{
-                          field[idx1dold+tshift*gcfg->dimlen.z]+=weight;
+                          //field[idx1dold+tshift*gcfg->dimlen.z]+=weight;
+                          field[idx1d[1]+tshift*gcfg->dimlen.z]+=weight;
 		          if(mediaid==0 && isdet==0 &&gcfg->issaveref)
-		              field[idx1d+tshift*gcfg->dimlen.z]+=-p.w;
+		              //field[idx1d+tshift*gcfg->dimlen.z]+=-p.w;
+		              field[idx1d[0]+tshift*gcfg->dimlen.z]+=-p.w;
                       }
                   }else{
-                      field[idx1dold+tshift*gcfg->dimlen.z]+=weight;
+                      //field[idx1dold+tshift*gcfg->dimlen.z]+=weight;
+                      field[idx1d[1]+tshift*gcfg->dimlen.z]+=weight;
 		      if(mediaid==0 && isdet==0 &&gcfg->issaveref)
-		          field[idx1d+tshift*gcfg->dimlen.z]+=-p.w;
+		          //field[idx1d+tshift*gcfg->dimlen.z]+=-p.w;
+		          field[idx1d[0]+tshift*gcfg->dimlen.z]+=-p.w;
                   }
   #ifdef USE_ATOMIC
                }else{
                   // ifndef CUDA_NO_SM_11_ATOMIC_INTRINSICS
-		  atomicadd(& field[idx1dold+tshift*gcfg->dimlen.z], weight);
+		  //atomicadd(& field[idx1dold+tshift*gcfg->dimlen.z], weight);
+		  atomicadd(& field[idx1d[1]+tshift*gcfg->dimlen.z], weight);
 		  if(mediaid==0 && isdet==0 &&gcfg->issaveref)
-		      atomicadd(& field[idx1d+tshift*gcfg->dimlen.z],-p.w);
-                  GPUDEBUG(("atomic write to [%d] %e, w=%f\n",idx1dold,weight,p.w));
+		      //atomicadd(& field[idx1d+tshift*gcfg->dimlen.z],-p.w);
+		      atomicadd(& field[idx1d[0]+tshift*gcfg->dimlen.z],-p.w);
+                  //GPUDEBUG(("atomic write to [%d] %e, w=%f\n",idx1dold,weight,p.w));
+                  GPUDEBUG(("atomic write to [%d] %e, w=%f\n",idx1d[1],weight,p.w));
                }
   #endif
               }
@@ -860,8 +890,10 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 	  // launch new photon when exceed time window or moving from non-zero voxel to zero voxel without reflection
 
           if((mediaid==0 && (!gcfg->doreflect || (gcfg->doreflect && n1==gproperty[mediaid].w))) || f.t>gcfg->twin1){
-              GPUDEBUG(("direct relaunch at idx=[%d] mediaid=[%d], ref=[%d]\n",idx1d,mediaid,gcfg->doreflect));
-	      if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),ppath,
+              //GPUDEBUG(("direct relaunch at idx=[%d] mediaid=[%d], ref=[%d]\n",idx1d,mediaid,gcfg->doreflect));
+              GPUDEBUG(("direct relaunch at idx=[%d] mediaid=[%d], ref=[%d]\n",idx1d[0],mediaid,gcfg->doreflect));
+	      //if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),ppath,
+	      if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d[0],&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),ppath,
 	          &energyloss,&energylaunched,n_det,detectedphoton,t,photonseed,media,srcpattern,idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress))
                    break;
               isdet=mediaid & DET_MASK;
@@ -875,8 +907,10 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
                 if(rand_do_roulette(t)*ROULETTE_SIZE<=1.f)
                    p.w*=ROULETTE_SIZE;
                 else{
-                   GPUDEBUG(("relaunch after Russian roulette at idx=[%d] mediaid=[%d], ref=[%d]\n",idx1d,mediaid,gcfg->doreflect));
-                   if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),ppath,
+                   //GPUDEBUG(("relaunch after Russian roulette at idx=[%d] mediaid=[%d], ref=[%d]\n",idx1d,mediaid,gcfg->doreflect));
+                   GPUDEBUG(("relaunch after Russian roulette at idx=[%d] mediaid=[%d], ref=[%d]\n",idx1d[0],mediaid,gcfg->doreflect));
+                   //if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),ppath,
+                   if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d[0],&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),ppath,
 	                &energyloss,&energylaunched,n_det,detectedphoton,t,photonseed,media,srcpattern,idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress))
                         break;
                    isdet=mediaid & DET_MASK;
@@ -913,7 +947,8 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
                         transmit(v,n1,prop.n,flipdir);
                         if(mediaid==0){ // transmission to external boundary
                             GPUDEBUG(("transmit to air, relaunch\n"));
-		    	    if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),
+		    	    //if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),
+		    	    if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d[0],&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),
 			        ppath,&energyloss,&energylaunched,n_det,detectedphoton,t,photonseed,
 				media,srcpattern,idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress))
                                 break;
@@ -933,8 +968,10 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 				(p.y=mcx_nextafterf(__float2int_rn(p.y), (v->x > 0.f)-(v->x < 0.f))) :
 				(p.z=mcx_nextafterf(__float2int_rn(p.z), (v->x > 0.f)-(v->x < 0.f))) );
 	                GPUDEBUG(("ref p_new=[%f %f %f] v_new=[%f %f %f]\n",p.x,p.y,p.z,v->x,v->y,v->z));
-                	idx1d=idx1dold;
-		 	mediaid=(media[idx1d] & MED_MASK);
+                	//idx1d=idx1dold;
+                	idx1d[0]=idx1d[1];
+		 	//mediaid=(media[idx1d] & MED_MASK);
+		 	mediaid=(media[idx1d[0]] & MED_MASK);
         	  	*((float4*)(&prop))=gproperty[mediaid];
                   	n1=prop.n;
 		  }
