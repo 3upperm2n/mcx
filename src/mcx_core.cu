@@ -343,10 +343,13 @@ __device__ inline void rotatevector(MCXdir *v, float stheta, float ctheta, float
 
 template <int mcxsource>
 __device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,Medium *prop,uint *idx1d,
-           uint *mediaid,float *w0,float *Lmove,uint isdet, float ppath[],float energyloss[],float energylaunched[],float n_det[],uint *dpnum,
+           //uint *mediaid,float *w0,float *Lmove,uint isdet, float ppath[],float energyloss[],float energylaunched[],float n_det[],uint *dpnum,
+           uint *mediaid,half *w0,float *Lmove,uint isdet, float ppath[],float energyloss[],float energylaunched[],float n_det[],uint *dpnum,
 	   RandType t[RAND_BUF_LEN],RandType photonseed[RAND_BUF_LEN],
 	   uint media[],float srcpattern[],int threadid,RandType rngseed[],RandType seeddata[],float gdebugdata[],volatile int gprogress[]){
-      *w0=1.f;     // reuse to count for launchattempt
+      //*w0=1;     // reuse to count for launchattempt
+      *w0=__float2half(1.f);     // reuse to count for launchattempt
+
       *Lmove=-1.f; // reuse as "canfocus" flag for each source: non-zero: focusable, zero: not focusable
       *rv=float3(gcfg->ps.x,gcfg->ps.y,gcfg->ps.z); // reuse as the origin of the src, needed for focusable sources
 
@@ -557,10 +560,17 @@ __device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,
 		 *mediaid=media[*idx1d];
 	     }
 	  }
-	  *w0+=1.f;
-	  if(*w0>gcfg->maxvoidstep)
+	  //*w0+=1.f;
+	  *w0=__hadd(*w0, __float2half(1.f));
+
+	  //if(*w0>gcfg->maxvoidstep)
+	  //   return -1;  // launch failed
+
+	  if(__hgt(*w0, __float2half(gcfg->maxvoidstep)))
 	     return -1;  // launch failed
+
       }while((*mediaid & MED_MASK)==0 || p->w<=gcfg->minenergy);
+
       f->ndone++; // launch successfully
       *((float4*)(prop))=gproperty[*mediaid & MED_MASK]; //always use mediaid to read gproperty[]
       if(gcfg->debuglevel & MCX_DEBUG_MOVE)
@@ -572,7 +582,10 @@ __device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,
       total launched energy includes the specular reflection loss*/
       
       *energylaunched+=p->w;
-      *w0=p->w;
+
+      //*w0=p->w;
+      *w0=__float2half(p->w);
+
       v->nscat=EPS;
       *Lmove=0.f;
       if((gcfg->debuglevel & MCX_DEBUG_PROGRESS) && ((int)(f->ndone) & 1) && (threadid==0 || threadid==blockDim.x * gridDim.x - 1 
@@ -635,7 +648,9 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
      Medium prop;    //can become float2 if no reflection (mua/musp is in 1/grid unit)
 
      float len, slen;
-     float w0,Lmove;
+     //float w0,Lmove;
+	 half w0;
+     float Lmove;
      int8_t   flipdir=-1;
  
      float *ppath=sharedmem+(blockDim.x<<2); // first blockDim.x<<2 stores v for all threads
@@ -795,7 +810,9 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 	          float weight=0.f;
                   int tshift=(int)(floorf((f.t-gcfg->twin0)*gcfg->Rtstep));
 		  if(gcfg->outputtype==otEnergy)
-		      weight=w0-p.w;
+		      //weight=w0-p.w;
+		      weight=__half2float(w0)-p.w;
+
 		  else if(gcfg->seed==SEED_FROM_FILE){
 		      if(gcfg->outputtype==otJacobian){
 		        weight=replayweight[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)]*Lmove;
@@ -803,7 +820,7 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 		      }
 		      //else if(gcfg->outputtype==otWP){}  // weight is 0.f
 		  }else
-		      weight=(prop.mua==0.f) ? 0.f : ((w0-p.w)/(prop.mua));
+		      weight=(prop.mua==0.f) ? 0.f : ((__half2float(w0)-p.w)/(prop.mua));
 
                   GPUDEBUG(("deposit to [%d] %e, w=%f\n",idx1dold,weight,p.w));
 
@@ -852,7 +869,8 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
               }
 #endif
 	     }
-	     w0=p.w;
+	     //w0=p.w;
+	     w0=__float2half(p.w);
 	     Lmove=0.f;
              //f.tnext+=gcfg->minaccumtime*prop.n; // fluence is a temporal-integration, unit=s
 	  }
