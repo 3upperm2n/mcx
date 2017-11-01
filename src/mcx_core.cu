@@ -325,7 +325,9 @@ __device__ inline void rotatevector2d(MCXdir *v, float stheta, float ctheta){
       GPUDEBUG(("new dir: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
 }
 
-__device__ inline void rotatevector(MCXdir *v, float stheta, float ctheta, float sphi, float cphi){
+//__device__ inline void rotatevector(MCXdir *v, float stheta, float ctheta, float sphi, float cphi){
+__device__ inline void rotatevector(MCXdir *v, float stheta, float ctheta, half sphi, half cphi){
+/*
       if( v->z>-1.f+EPS && v->z<1.f-EPS ) {
    	  float tmp0=1.f-v->z*v->z;
    	  float tmp1=stheta*rsqrtf(tmp0);
@@ -338,6 +340,41 @@ __device__ inline void rotatevector(MCXdir *v, float stheta, float ctheta, float
       }else{
    	  *((float4*)v)=float4(stheta*cphi,stheta*sphi,(v->z>0.f)?ctheta:-ctheta,v->nscat);
       }
+*/
+
+	float f_cphi = __half2float(cphi);
+	float f_sphi = __half2float(sphi);
+
+      if( v->z>-1.f+EPS && v->z<1.f-EPS ) {
+   	  float tmp0=1.f-v->z*v->z;
+   	  float tmp1=stheta*rsqrtf(tmp0);
+   	  *((float4*)v)=float4(
+   	       tmp1*(v->x*v->z*f_cphi - v->y*f_sphi) + v->x*ctheta,
+   	       tmp1*(v->y*v->z*f_cphi + v->x*f_sphi) + v->y*ctheta,
+   	      -tmp1*tmp0*f_cphi                    + v->z*ctheta,
+   	       v->nscat
+   	  );
+      }else{
+   	  *((float4*)v)=float4(stheta*f_cphi,stheta*f_sphi,(v->z>0.f)?ctheta:-ctheta,v->nscat);
+      }
+	  
+
+	/*
+      if( v->z>-1.f+EPS && v->z<1.f-EPS ) {
+   	  float tmp0=1.f-v->z*v->z;
+   	  float tmp1=stheta*rsqrtf(tmp0);
+   	  *((float4*)v)=float4(
+   	       tmp1*(v->x*v->z*__half2float(cphi)- v->y*__half2float(sphi)) + v->x*ctheta,
+   	       tmp1*(v->y*v->z*__half2float(cphi)+ v->x*__half2float(sphi)) + v->y*ctheta,
+   	      -tmp1*tmp0*__half2float(cphi)                   + v->z*ctheta,
+   	       v->nscat
+   	  );
+      }else{
+   	  *((float4*)v)=float4(stheta*__half2float(cphi), stheta*__half2float(sphi),(v->z>0.f)?ctheta:-ctheta,v->nscat);
+      }
+	  */
+
+
       GPUDEBUG(("new dir: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
 }
 
@@ -485,9 +522,16 @@ __device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,
 		case(MCX_SRC_ARCSINE): {
 		      // Uniform point picking on a sphere 
 		      // http://mathworld.wolfram.com/SpherePointPicking.html
-		      float ang,stheta,ctheta,sphi,cphi;
+		      //float ang,stheta,ctheta,sphi,cphi;
+		      float ang,stheta,ctheta;
+			  half sphi,cphi;
+
 		      ang=TWO_PI*rand_uniform01(t); //next arimuth angle
-		      sincosf(ang,&sphi,&cphi);
+		      //sincosf(ang,&sphi,&cphi);
+			  //half tt = __float2half(ang);
+			  sphi=hsin(__float2half(ang));
+			  cphi=hcos(__float2half(ang));
+
 		      if(gcfg->srctype==MCX_SRC_CONE){  // a solid-angle section of a uniform sphere
 			  do{
 			      ang=(gcfg->srcparam1.y>0) ? TWO_PI*rand_uniform01(t) : acosf(2.f*rand_uniform01(t)-1.f); //sine distribution
@@ -504,9 +548,18 @@ __device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,
 		      break;
 		}
 		case(MCX_SRC_ZGAUSSIAN): {
-		      float ang,stheta,ctheta,sphi,cphi;
+		      //float ang,stheta,ctheta,sphi,cphi;
+		      float ang,stheta,ctheta;
+			  half sphi,cphi;
 		      ang=TWO_PI*rand_uniform01(t); //next arimuth angle
-		      sincosf(ang,&sphi,&cphi);
+
+		      //sincosf(ang,&sphi,&cphi);
+			  //half tt=__float2half(ang);
+			  //sphi=hsin(tt);
+			  //cphi=hcos(tt);
+			  sphi=hsin(__float2half(ang));
+			  cphi=hcos(__float2half(ang));
+
 		      ang=sqrtf(-2.f*logf(rand_uniform01(t)))*(1.f-2.f*rand_uniform01(t))*gcfg->srcparam1.x;
 		      sincosf(ang,&stheta,&ctheta);
 		      rotatevector(v,stheta,ctheta,sphi,cphi);
@@ -692,60 +745,72 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
    	       f.pscat=rand_next_scatlen(t); // random scattering probability, unit-less
 
                GPUDEBUG(("scat L=%f RNG=[%0lX %0lX] \n",f.pscat,t[0],t[1]));
-	       if(v->nscat!=EPS){ // if this is not my first jump
-                       //random arimuthal angle
-	               float cphi=1.f,sphi=0.f,theta,stheta,ctheta;
-                       float tmp0=0.f;
-		       if(!gcfg->is2d){
-		           tmp0=TWO_PI*rand_next_aangle(t); //next arimuth angle
-                           sincosf(tmp0,&sphi,&cphi);
-		       }
-                       GPUDEBUG(("scat phi=%f\n",tmp0));
-		       tmp0=(v->nscat > gcfg->gscatter) ? 0.f : prop.g;
+			   if(v->nscat!=EPS){ // if this is not my first jump
+				   //random arimuthal angle
+				   //float cphi=1.f,sphi=0.f,theta,stheta,ctheta;
+				   float theta,stheta,ctheta;
+				   half cphi=__float2half(1.f);
+				   half sphi=__float2half(0.f);
 
-                       //Henyey-Greenstein Phase Function, "Handbook of Optical 
-                       //Biomedical Diagnostics",2002,Chap3,p234, also see Boas2002
+				   float tmp0=0.f;
 
-                       if(tmp0>EPS){  //if prop.g is too small, the distribution of theta is bad
-		           tmp0=(1.f-prop.g*prop.g)/(1.f-prop.g+2.f*prop.g*rand_next_zangle(t));
-		           tmp0*=tmp0;
-		           tmp0=(1.f+prop.g*prop.g-tmp0)/(2.f*prop.g);
+				   if(!gcfg->is2d){
+					   tmp0=TWO_PI*rand_next_aangle(t); //next arimuth angle
+					   //sincosf(tmp0,&sphi,&cphi);
 
-                           // when ran=1, CUDA gives me 1.000002 for tmp0 which produces nan later
-                           // detected by Ocelot,thanks to Greg Diamos,see http://bit.ly/cR2NMP
-                           tmp0=fmax(-1.f, fmin(1.f, tmp0));
+					   //half tt = __float2half(tmp0);
+					   //cphi = hcos(tt);
+					   //sphi = hsin(tt);
+					   sphi=hsin(__float2half(tmp0));
+					   cphi=hcos(__float2half(tmp0));
+				   }
+				   GPUDEBUG(("scat phi=%f\n",tmp0));
+				   tmp0=(v->nscat > gcfg->gscatter) ? 0.f : prop.g;
 
-		           theta=acosf(tmp0);
-		           stheta=sinf(theta);
-		           ctheta=tmp0;
-                       }else{
-			   theta=acosf(2.f*rand_next_zangle(t)-1.f);
-                           sincosf(theta,&stheta,&ctheta);
-                       }
-                       GPUDEBUG(("scat theta=%f\n",theta));
-		       if(gcfg->is2d)
-		           rotatevector2d(v,stheta,ctheta);
-		       else
-                           rotatevector(v,stheta,ctheta,sphi,cphi);
-                       v->nscat++;
-                       rv=float3(__fdividef(1.f,v->x),__fdividef(1.f,v->y),__fdividef(1.f,v->z));
-                       if(gcfg->outputtype==otWP){
-                            // photontof[] and replayweight[] should be cached using local mem to avoid global read
-                            int tshift=(int)(floorf((photontof[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)]-gcfg->twin0)*gcfg->Rtstep));
+				   //Henyey-Greenstein Phase Function, "Handbook of Optical 
+				   //Biomedical Diagnostics",2002,Chap3,p234, also see Boas2002
+
+				   if(tmp0>EPS){  //if prop.g is too small, the distribution of theta is bad
+					   tmp0=(1.f-prop.g*prop.g)/(1.f-prop.g+2.f*prop.g*rand_next_zangle(t));
+					   tmp0*=tmp0;
+					   tmp0=(1.f+prop.g*prop.g-tmp0)/(2.f*prop.g);
+
+					   // when ran=1, CUDA gives me 1.000002 for tmp0 which produces nan later
+					   // detected by Ocelot,thanks to Greg Diamos,see http://bit.ly/cR2NMP
+					   tmp0=fmax(-1.f, fmin(1.f, tmp0));
+
+					   theta=acosf(tmp0);
+					   stheta=sinf(theta);
+					   ctheta=tmp0;
+				   }else{
+					   theta=acosf(2.f*rand_next_zangle(t)-1.f);
+					   sincosf(theta,&stheta,&ctheta);
+				   }
+				   GPUDEBUG(("scat theta=%f\n",theta));
+				   if(gcfg->is2d)
+					   rotatevector2d(v,stheta,ctheta);
+				   else
+					   rotatevector(v,stheta,ctheta,sphi,cphi);
+
+				   v->nscat++;
+				   rv=float3(__fdividef(1.f,v->x),__fdividef(1.f,v->y),__fdividef(1.f,v->z));
+				   if(gcfg->outputtype==otWP){
+					   // photontof[] and replayweight[] should be cached using local mem to avoid global read
+					   int tshift=(int)(floorf((photontof[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)]-gcfg->twin0)*gcfg->Rtstep));
 #ifdef USE_ATOMIC
-                            if(!gcfg->isatomic){
+					   if(!gcfg->isatomic){
 #endif
-                                field[idx1d+tshift*gcfg->dimlen.z]+=replayweight[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)];
+						   field[idx1d+tshift*gcfg->dimlen.z]+=replayweight[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)];
 #ifdef USE_ATOMIC
-                            }else{
-                                atomicadd(& field[idx1d+tshift*gcfg->dimlen.z], replayweight[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)]);
-                                GPUDEBUG(("atomic write to [%d] %e, w=%f\n",idx1d,weight,p.w));
-                            }
+					   }else{
+						   atomicadd(& field[idx1d+tshift*gcfg->dimlen.z], replayweight[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)]);
+						   GPUDEBUG(("atomic write to [%d] %e, w=%f\n",idx1d,weight,p.w));
+					   }
 #endif
-                       }
-                       if(gcfg->debuglevel & MCX_DEBUG_MOVE)
-                           savedebugdata(&p,(uint)f.ndone+idx*gcfg->threadphoton+umin(idx,(idx<gcfg->oddphotons)*idx),gdebugdata);
-	       }
+				   }
+				   if(gcfg->debuglevel & MCX_DEBUG_MOVE)
+					   savedebugdata(&p,(uint)f.ndone+idx*gcfg->threadphoton+umin(idx,(idx<gcfg->oddphotons)*idx),gdebugdata);
+			   }
 	       v->nscat=(int)v->nscat;
 	  }
 
