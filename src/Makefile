@@ -196,7 +196,7 @@ $(OUTPUT_DIR)/$(BINARY): $(OBJS)
 	$(CC) $(INCLUDEDIRS) $(CPPOPT) -c -o $@  $<
 
 %$(OBJSUFFIX): %.cu
-	$(CUDACC) -c $(CUCCOPT) -o $@  $<
+	$(CUDACC) -c $(CUCCOPT) -Xptxas -v  -o $@  $<
 
 clean:
 	-rm -f $(OBJS) $(OUTPUT_DIR)/$(BINARY)$(EXESUFFIX) $(OUTPUT_DIR)/$(BINARY)_atomic$(EXESUFFIX) $(OUTPUT_DIR)/$(BINARY)_det$(EXESUFFIX)
