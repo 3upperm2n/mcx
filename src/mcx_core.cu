@@ -759,11 +759,22 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 
           // dealing with absorption
 	  slen=fmin(slen,f.pscat);
+
 	  len=slen/(prop.mus*(v->nscat+1.f > gcfg->gscatter ? (1.f-prop.g) : 1.f));
+	  half hlen=__float2half(len);
+	  
 	  *((float3*)(&p)) = (gcfg->faststep || slen==f.pscat) ? float3(p.x+len*v->x,p.y+len*v->y,p.z+len*v->z) : float3(htime.x,htime.y,htime.z);
-	  p.w*=expf(-prop.mua*len);
+
+	  //p.w*=expf(-prop.mua*len);
+	  //p.w = __half2float(__hmul(__float2half(p.w), hexp(__hmul(__float2half(-prop.mua), __float2half(len)))));
+	  p.w *= __half2float(hexp(__hmul(__float2half(-prop.mua), hlen)));
+
 	  f.pscat-=slen;     //remaining probability: sum(s_i*mus_i), unit-less
+
 	  f.t+=len*prop.n*gcfg->oneoverc0; //propagation time  (unit=s)
+	  //f.t+=__half2float(__hmul(hlen, __hmul(__float2half(prop.n), __float2half(gcfg->oneoverc0)))); //propagation time  (unit=s)
+
+
 	  Lmove+=len;
 
           GPUDEBUG(("update p=[%f %f %f] -> len=%f\n",p.x,p.y,p.z,len));
