@@ -27,7 +27,8 @@ DOXY       := doxygen
 DOCDIR     := $(MCXDIR)/doc
 DOXYCFG=mcxdoxy.cfg
 
-CUDA_PATH=/pub/cuda-8.0
+#CUDA_PATH=/pub/cuda-8.0
+CUDA_PATH=/usr/local/cuda-8.0
 
 #INCLUDEDIRS=-I/usr/local/cuda/include
 INCLUDEDIRS=-I$(CUDA_PATH)/include
@@ -139,7 +140,8 @@ logbox detbox:          BINARY:=$(BINARY)_cached
 all xorfermi maxwell pascal:    fermi
 maxwell:    CUGENCODE=-arch=compute_20 -code=sm_20 -code=sm_30 -code=sm_35 -code=sm_50 -code=sm_52
 #pascal:     CUGENCODE=-arch=compute_20 -code=sm_20 -code=sm_30 -code=sm_35 -code=sm_50 -code=sm_52 -code=sm_61
-pascal:     CUGENCODE=-arch=sm_61
+#pascal:     CUGENCODE=-arch=sm_61
+pascal:     CUGENCODE=-arch=sm_60
 xormax:     maxwell
 xorpas:     pascal
 xorfermi xormax xorpas:     CUCCOPT+=-DUSE_XORSHIFT128P_RAND
@@ -196,7 +198,8 @@ $(OUTPUT_DIR)/$(BINARY): $(OBJS)
 	$(CC) $(INCLUDEDIRS) $(CPPOPT) -c -o $@  $<
 
 %$(OBJSUFFIX): %.cu
-	$(CUDACC) -c $(CUCCOPT) -Xptxas -v  -o $@  $<
+	$(CUDACC) -c $(CUCCOPT)  -o $@  $<
+	#$(CUDACC) -c $(CUCCOPT) -Xptxas -v  -o $@  $<
 
 clean:
 	-rm -f $(OBJS) $(OUTPUT_DIR)/$(BINARY)$(EXESUFFIX) $(OUTPUT_DIR)/$(BINARY)_atomic$(EXESUFFIX) $(OUTPUT_DIR)/$(BINARY)_det$(EXESUFFIX)
