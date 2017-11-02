@@ -248,8 +248,8 @@ until it hits an non-zero voxel */
 __device__ inline int skipvoid(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,uint media[]){
       //int count=1,idx1d;
       int count=1;
-	  //uint16_t idx1d;
-	  uint8_t idx1d;
+	  uint16_t idx1d;
+	  //uint8_t idx1d;
 
       while(1){
           if(p->x>=0.f && p->y>=0.f && p->z>=0.f && p->x < gcfg->maxidx.x
@@ -347,8 +347,8 @@ __device__ inline void rotatevector(MCXdir *v, float stheta, float ctheta, float
 
 template <int mcxsource>
 //__device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,Medium *prop,uint *idx1d,
-//__device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,Medium *prop,uint16_t *idx1d,
-__device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,Medium *prop,uint8_t *idx1d,
+__device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,Medium *prop,uint16_t *idx1d,
+//__device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,Medium *prop,uint8_t *idx1d,
            uint *mediaid,float *w0,float *Lmove,uint isdet, float ppath[],float energyloss[],float energylaunched[],float n_det[],uint *dpnum,
 	   RandType t[RAND_BUF_LEN],RandType photonseed[RAND_BUF_LEN],
 	   uint media[],float srcpattern[],int threadid,RandType rngseed[],RandType seeddata[],float gdebugdata[],volatile int gprogress[]){
@@ -624,8 +624,8 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
      float  energylaunched=genergy[(idx<<1)+1];
 
      //uint idx1d, idx1dold;   //idx1dold is related to reflection
-     //uint16_t idx1d[2];   // 0 : idx1d, 1: idx1dold
-     uint8_t idx1d[2];   // 0 : idx1d, 1: idx1dold
+     uint16_t idx1d[2];   // 0 : idx1d, 1: idx1dold
+     //uint8_t idx1d[2];   // 0 : idx1d, 1: idx1dold
 
      uint moves=0;
 
