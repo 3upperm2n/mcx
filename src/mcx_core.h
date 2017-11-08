@@ -24,6 +24,7 @@
 #ifndef _MCEXTREME_GPU_LAUNCH_H
 #define _MCEXTREME_GPU_LAUNCH_H
 
+#include <cuda_fp16.h>
 #include "mcx_utils.h"
 
 #ifdef  __cplusplus
@@ -53,6 +54,14 @@ typedef struct  __align__(16) MCXDir{
 	float z; /**< directional vector of the photon, z-component*/
         float nscat; /**< total number of scattering events*/
 }MCXdir;
+
+// leiming
+typedef struct  __align__(8) hMCXDir{
+        half x; /**< directional vector of the photon, x-component*/
+	half y; /**< directional vector of the photon, y-component*/
+	half z; /**< directional vector of the photon, z-component*/
+        half nscat; /**< total number of scattering events*/
+}hMCXdir;
 
 typedef struct  __align__(16) MCXTimer{
         float pscat; /**< remaining scattering probability, unit-less*/
@@ -95,6 +104,7 @@ typedef struct  __align__(16) KernelParams {
   unsigned int save2pt,doreflect,dorefint,savedet;
   float  Rtstep;
   float4 ps,c0;
+  half psHalf[4]; // leiming 
   float3 maxidx;
   uint3  dimlen,cp0,cp1;
   uint2  cachebox;
