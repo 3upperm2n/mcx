@@ -55,7 +55,7 @@ typedef struct  __align__(16) MCXDir{
         float nscat; /**< total number of scattering events*/
 }MCXdir;
 
-// leiming
+// leiming : vHalf
 typedef struct  __align__(8) hMCXDir{
         half x;
 	half y;
