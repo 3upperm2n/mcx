@@ -57,10 +57,10 @@ typedef struct  __align__(16) MCXDir{
 
 // leiming
 typedef struct  __align__(8) hMCXDir{
-        half x; /**< directional vector of the photon, x-component*/
-	half y; /**< directional vector of the photon, y-component*/
-	half z; /**< directional vector of the photon, z-component*/
-        half nscat; /**< total number of scattering events*/
+        half x;
+	half y;
+	half z;
+        half nscat;
 }hMCXdir;
 
 typedef struct  __align__(16) MCXTimer{
@@ -104,7 +104,7 @@ typedef struct  __align__(16) KernelParams {
   unsigned int save2pt,doreflect,dorefint,savedet;
   float  Rtstep;
   float4 ps,c0;
-  half psHalf[4]; // leiming 
+  //half psHalf[4]; // leiming 
   float3 maxidx;
   uint3  dimlen,cp0,cp1;
   uint2  cachebox;
