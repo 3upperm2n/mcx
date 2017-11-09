@@ -32,6 +32,11 @@
 #include "tictoc.h"
 #include "mcx_const.h"
 
+// leiming: redefine half intrinsics
+#define float2half(x) __float2half(x)
+#define hmul(x,y) __hmul(x,y)
+#define hadd(x,y) __hadd(x,y)
+
 #if defined(USE_XORSHIFT128P_RAND)
     #include "xorshift128p_rand.cu" // use xorshift128+ RNG (XORSHIFT128P)
 #elif defined(USE_POSIX_RAND)
@@ -456,6 +461,13 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 					   p->w);
 
 		      // leiming: add scrparam1/scrparam2 to half format ; convert rx/ry to half
+
+		      half rxHalf = float2half(rx);
+		      half ryHalf = float2half(ry);
+		      pHalf[0] = hadd(hadd(pHalf[0],hmul(rxHalf, gcfg->srcparam1_x)),hmul(ryHalf, gcfg->srcparam2_x));
+		      pHalf[1] = hadd(hadd(pHalf[1],hmul(rxHalf, gcfg->srcparam1_y)),hmul(ryHalf, gcfg->srcparam2_y));
+		      pHalf[2] = hadd(hadd(pHalf[2],hmul(rxHalf, gcfg->srcparam1_z)),hmul(ryHalf, gcfg->srcparam2_z));
+
 
 		      if(gcfg->srctype==MCX_SRC_PATTERN) // need to prevent rx/ry=1 here
 			  p->w=srcpattern[(int)(ry*JUST_BELOW_ONE*gcfg->srcparam2.w)*(int)(gcfg->srcparam1.w)+(int)(rx*JUST_BELOW_ONE*gcfg->srcparam1.w)];
