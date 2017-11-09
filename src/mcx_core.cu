@@ -150,13 +150,14 @@ __device__ inline void savedetphoton(uint detid,
 		baseaddr+=3;
 		*((float3*)(n_det+baseaddr))=float3(v->x,v->y,v->z);
 
+		// leiming : half
 		n_detHalf[baseaddr] = __float2half(p0->x);
 		n_detHalf[baseaddr+1] = __float2half(p0->y);
 		n_detHalf[baseaddr+2] = __float2half(p0->z);
 		baseaddr+=3;
-		n_detHalf[baseaddr] = __float2half(v->x);
-		n_detHalf[baseaddr+1] = __float2half(v->y);
-		n_detHalf[baseaddr+2] = __float2half(v->z);
+		n_detHalf[baseaddr] = vHalf->x;
+		n_detHalf[baseaddr+1] = vHalf->y;
+		n_detHalf[baseaddr+2] = vHalf->z;
 	    }
 	 }
       }
@@ -383,12 +384,7 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
       *Lmove=-1.f; // reuse as "canfocus" flag for each source: non-zero: focusable, zero: not focusable
       *rv=float3(gcfg->ps.x,gcfg->ps.y,gcfg->ps.z); // reuse as the origin of the src, needed for focusable sources
 
-      /*
       // leiming: convert ps to half (MCXParam in constant memory)               
-      rvHalf[0] = gcfg->psHalf[0];                                              
-      rvHalf[1] = gcfg->psHalf[1];                                              
-      rvHalf[2] = gcfg->psHalf[2];
-      */
       rvHalf[0] = gcfg->ps_x;                                              
       rvHalf[1] = gcfg->ps_y;
       rvHalf[2] = gcfg->ps_z;

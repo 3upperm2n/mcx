@@ -104,8 +104,7 @@ typedef struct  __align__(16) KernelParams {
   unsigned int save2pt,doreflect,dorefint,savedet;
   float  Rtstep;
   float4 ps,c0;
-  //half psHalf[4]; // leiming 
-  half ps_x;
+  half ps_x; // leiming
   half ps_y;
   half ps_z;
   half ps_w;
