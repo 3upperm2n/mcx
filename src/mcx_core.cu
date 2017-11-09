@@ -419,14 +419,22 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
       }
       do{
 	  *((float4*)p)=gcfg->ps;
+
 	  // update p with ps in mcxparam
 	  pHalf[0] = gcfg->ps_x;
 	  pHalf[1] = gcfg->ps_y;
 	  pHalf[2] = gcfg->ps_z;
 	  pHalf[3] = gcfg->ps_w;
 
-
 	  *((float4*)v)=gcfg->c0;
+	  // update v with c0 in mcxparam (constant)
+	  (*vHalf).x = gcfg->c0_x;
+	  (*vHalf).y = gcfg->c0_y;
+	  (*vHalf).z = gcfg->c0_z;
+	  (*vHalf).nscat = gcfg->c0_w;
+
+
+
 	  *((float4*)f)=float4(0.f,0.f,gcfg->minaccumtime,f->ndone);
           *idx1d=gcfg->idx1dorig;
           *mediaid=gcfg->mediaidorig;
@@ -1199,7 +1207,18 @@ void mcx_run_simulation(Config *cfg,GPUInfo *gpu){
      half ps_z = approx_float_to_half(cfg->srcpos.z);
      half ps_w = approx_float_to_half(1.f);
 
+
      float4 c0=cfg->srcdir;
+     // convert c0 to half
+     half c0_x = approx_float_to_half(cfg->srcdir.x);
+     half c0_y = approx_float_to_half(cfg->srcdir.y);
+     half c0_z = approx_float_to_half(cfg->srcdir.z);
+     half c0_w = approx_float_to_half(cfg->srcdir.w);;
+
+
+
+
+
      float3 maxidx=float3(cfg->dim.x,cfg->dim.y,cfg->dim.z);
      float *energy;
      int timegate=0, totalgates, gpuid, gpuphoton=0,threadid=0;
@@ -1242,10 +1261,8 @@ void mcx_run_simulation(Config *cfg,GPUInfo *gpu){
                      (uint)cfg->issave2pt,(uint)cfg->isreflect,(uint)cfg->isrefint,(uint)cfg->issavedet,1.f/cfg->tstep,
 		     p0,c0,
 		     //p0Half, // leiming
-		     ps_x,
-		     ps_y,
-		     ps_z,
-		     ps_w,
+		     ps_x, ps_y, ps_z, ps_w,
+		     c0_x, c0_y, c0_w, c0_z,
 		     maxidx,uint3(0,0,0),cp0,cp1,uint2(0,0),cfg->minenergy,
                      cfg->sradius*cfg->sradius,minstep*R_C0*cfg->unitinmm,cfg->srctype,
 		     cfg->srcparam1,cfg->srcparam2,cfg->voidtime,cfg->maxdetphoton,
