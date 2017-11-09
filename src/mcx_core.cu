@@ -419,6 +419,13 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
       }
       do{
 	  *((float4*)p)=gcfg->ps;
+	  // update p with ps in mcxparam
+	  pHalf[0] = gcfg->ps_x;
+	  pHalf[1] = gcfg->ps_y;
+	  pHalf[2] = gcfg->ps_z;
+	  pHalf[3] = gcfg->ps_w;
+
+
 	  *((float4*)v)=gcfg->c0;
 	  *((float4*)f)=float4(0.f,0.f,gcfg->minaccumtime,f->ndone);
           *idx1d=gcfg->idx1dorig;
