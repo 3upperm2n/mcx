@@ -123,7 +123,8 @@ __device__ inline void savedetphoton(uint detid,
 	float n_det[], half n_detHalf[],
 	uint *detectedphoton,
 	float nscat, half nscatHalf, // leiming
-	float *ppath,MCXpos *p0,
+	float *ppath,
+	MCXpos *p0, half *pHalf, // leiming
 	MCXdir *v, hMCXdir *vHalf, // leiming
 	RandType t[RAND_BUF_LEN],RandType *seeddata){
       detid=finddetector(p0,detid-1);
@@ -151,9 +152,10 @@ __device__ inline void savedetphoton(uint detid,
 		*((float3*)(n_det+baseaddr))=float3(v->x,v->y,v->z);
 
 		// leiming : half
-		n_detHalf[baseaddr] = __float2half(p0->x);
-		n_detHalf[baseaddr+1] = __float2half(p0->y);
-		n_detHalf[baseaddr+2] = __float2half(p0->z);
+		n_detHalf[baseaddr] = pHalf[0];
+		n_detHalf[baseaddr+1] = pHalf[1];
+		n_detHalf[baseaddr+2] = pHalf[2];
+
 		baseaddr+=3;
 		n_detHalf[baseaddr] = vHalf->x;
 		n_detHalf[baseaddr+1] = vHalf->y;
@@ -399,7 +401,8 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 			 n_det, n_detHalf,
 			 dpnum,
 			 v->nscat, vHalf->nscat, // leiming
-			 ppath,p,
+			 ppath,
+			 p, pHalf,
 			 v, vHalf, photonseed,seeddata);
              clearpath(ppath,gcfg->maxmedia);
           }
