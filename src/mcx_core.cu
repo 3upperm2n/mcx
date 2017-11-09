@@ -436,6 +436,7 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 
 
 	  *((float4*)f)=float4(0.f,0.f,gcfg->minaccumtime,f->ndone);
+
           *idx1d=gcfg->idx1dorig;
           *mediaid=gcfg->mediaidorig;
 	  if(gcfg->issaveseed)
@@ -448,10 +449,14 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 		case(MCX_SRC_PENCILARRAY): { /*a rectangular grid over a plane*/
 		      float rx=rand_uniform01(t);
 		      float ry=rand_uniform01(t);
+
 		      *((float4*)p)=float4(p->x+rx*gcfg->srcparam1.x+ry*gcfg->srcparam2.x,
 					   p->y+rx*gcfg->srcparam1.y+ry*gcfg->srcparam2.y,
 					   p->z+rx*gcfg->srcparam1.z+ry*gcfg->srcparam2.z,
 					   p->w);
+
+		      // leiming: add scrparam1/scrparam2 to half format ; convert rx/ry to half
+
 		      if(gcfg->srctype==MCX_SRC_PATTERN) // need to prevent rx/ry=1 here
 			  p->w=srcpattern[(int)(ry*JUST_BELOW_ONE*gcfg->srcparam2.w)*(int)(gcfg->srcparam1.w)+(int)(rx*JUST_BELOW_ONE*gcfg->srcparam1.w)];
 		      else if(gcfg->srctype==MCX_SRC_FOURIER)
@@ -1215,7 +1220,16 @@ void mcx_run_simulation(Config *cfg,GPUInfo *gpu){
      half c0_z = approx_float_to_half(cfg->srcdir.z);
      half c0_w = approx_float_to_half(cfg->srcdir.w);;
 
+     // leiming: convert srcparam to half
+     half srcparam1_x = approx_float_to_half(cfg->srcparam1.x);
+     half srcparam1_y = approx_float_to_half(cfg->srcparam1.y);
+     half srcparam1_z = approx_float_to_half(cfg->srcparam1.z);
+     half srcparam1_w = approx_float_to_half(cfg->srcparam1.w);
 
+     half srcparam2_x = approx_float_to_half(cfg->srcparam2.x);
+     half srcparam2_y = approx_float_to_half(cfg->srcparam2.y);
+     half srcparam2_z = approx_float_to_half(cfg->srcparam2.z);
+     half srcparam2_w = approx_float_to_half(cfg->srcparam2.w);
 
 
 
@@ -1265,7 +1279,11 @@ void mcx_run_simulation(Config *cfg,GPUInfo *gpu){
 		     c0_x, c0_y, c0_w, c0_z,
 		     maxidx,uint3(0,0,0),cp0,cp1,uint2(0,0),cfg->minenergy,
                      cfg->sradius*cfg->sradius,minstep*R_C0*cfg->unitinmm,cfg->srctype,
-		     cfg->srcparam1,cfg->srcparam2,cfg->voidtime,cfg->maxdetphoton,
+		     cfg->srcparam1,
+		     srcparam1_x,srcparam1_y,srcparam1_z,srcparam1_w,
+		     cfg->srcparam2,
+		     srcparam2_x,srcparam2_y,srcparam2_z,srcparam2_w,
+		     cfg->voidtime,cfg->maxdetphoton,
 		     cfg->medianum-1,cfg->detnum,0,0,cfg->reseedlimit,ABS(cfg->sradius+2.f)<EPS /*isatomic*/,
 		     (uint)cfg->maxvoidstep,cfg->issaveseed>0,cfg->issaveexit>0,cfg->issaveref>0,
 		     cfg->maxdetphoton*detreclen,cfg->seed,(uint)cfg->outputtype,0,0,cfg->faststep,

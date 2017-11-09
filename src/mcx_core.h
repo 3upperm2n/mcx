@@ -117,7 +117,9 @@ typedef struct  __align__(16) KernelParams {
   float  minaccumtime;
   int    srctype;
   float4 srcparam1;
+  half srcparam1_x,srcparam1_y,srcparam1_z,srcparam1_w; // leiming
   float4 srcparam2;
+  half srcparam2_x, srcparam2_y,srcparam2_z,srcparam2_w; // leiming
   int voidtime;
   unsigned int maxdetphoton;
   unsigned int maxmedia;
