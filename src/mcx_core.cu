@@ -25,6 +25,7 @@
 #include <cmath>
 
 #include <cuda_fp16.h>
+#include "fp16_conversion.h"   // host function for half conversion
 
 #include "br2cu.h"
 #include "mcx_core.h"
@@ -370,7 +371,9 @@ __device__ inline void rotatevector(MCXdir *v, float stheta, float ctheta, float
 template <int mcxsource>
 __device__ inline int launchnewphoton(MCXpos *p, half *pHalf, 
 	MCXdir *v, hMCXdir *vHalf, 
-	MCXtime *f,float3* rv,Medium *prop,uint *idx1d,
+	MCXtime *f,
+	float3* rv, half *rvHalf, 
+	Medium *prop,uint *idx1d,
            uint *mediaid,float *w0,float *Lmove,uint isdet, float ppath[],float energyloss[],float energylaunched[],
 	   float n_det[], half n_detHalf[],
 	   uint *dpnum,
@@ -379,6 +382,16 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
       *w0=1.f;     // reuse to count for launchattempt
       *Lmove=-1.f; // reuse as "canfocus" flag for each source: non-zero: focusable, zero: not focusable
       *rv=float3(gcfg->ps.x,gcfg->ps.y,gcfg->ps.z); // reuse as the origin of the src, needed for focusable sources
+
+      /*
+      // leiming: convert ps to half (MCXParam in constant memory)               
+      rvHalf[0] = gcfg->psHalf[0];                                              
+      rvHalf[1] = gcfg->psHalf[1];                                              
+      rvHalf[2] = gcfg->psHalf[2];
+      */
+      rvHalf[0] = gcfg->ps_x;                                              
+      rvHalf[1] = gcfg->ps_y;
+      rvHalf[2] = gcfg->ps_z;
 
       if(p->w>=0.f){
           *energyloss+=p->w;  // sum all the remaining energy
@@ -673,7 +686,9 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
      uint  mediaidold=0,isdet=0;
      float  n1;   //reflection var
      float3 htime;            //time-of-fly for collision test
+
      float3 rv;               //reciprocal velocity
+     half rvHalf[3]; // leiming
 
      //for MT RNG, these will be zero-length arrays and be optimized out
      RandType t[RAND_BUF_LEN];
@@ -705,7 +720,9 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 
      if(launchnewphoton<mcxsource>(&p,&pHalf[0],
 		 v, vHalf,
-		 &f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,0,ppath,&energyloss,
+		 &f,
+		 &rv, &rvHalf[0], 
+		 &prop,&idx1d,&mediaid,&w0,&Lmove,0,ppath,&energyloss,
        &energylaunched,
        n_det, n_detHalf,  // leiming
        detectedphoton,t,photonseed,media,srcpattern,
@@ -915,7 +932,9 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
               GPUDEBUG(("direct relaunch at idx=[%d] mediaid=[%d], ref=[%d]\n",idx1d,mediaid,gcfg->doreflect));
 	      if(launchnewphoton<mcxsource>(&p,&pHalf[0],
 			  v, vHalf, // leiming
-			  &f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),ppath,
+			  &f,
+			  &rv, &rvHalf[0], 
+			  &prop,&idx1d,&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),ppath,
 	          &energyloss,&energylaunched,
 		  n_det, n_detHalf,   // leiming
 		  detectedphoton,t,photonseed,media,srcpattern,idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress))
@@ -934,7 +953,9 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
                    GPUDEBUG(("relaunch after Russian roulette at idx=[%d] mediaid=[%d], ref=[%d]\n",idx1d,mediaid,gcfg->doreflect));
                    if(launchnewphoton<mcxsource>(&p,&pHalf[0],
 			       v, vHalf,
-			       &f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),ppath,
+			       &f,
+			       &rv, &rvHalf[0], 
+			       &prop,&idx1d,&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),ppath,
 	                &energyloss,&energylaunched,
 			n_det, n_detHalf, // leiming
 			detectedphoton,t,photonseed,media,srcpattern,idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress))
@@ -975,7 +996,9 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
                             GPUDEBUG(("transmit to air, relaunch\n"));
 		    	    if(launchnewphoton<mcxsource>(&p,&pHalf[0],
 					v, vHalf,
-					&f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),
+					&f,
+					&rv, &rvHalf[0],
+					&prop,&idx1d,&mediaid,&w0,&Lmove,(mediaidold & DET_MASK),
 			        ppath,&energyloss,&energylaunched,
 				n_det, n_detHalf, // leiming
 				detectedphoton,t,photonseed,
@@ -1156,7 +1179,20 @@ void mcx_run_simulation(Config *cfg,GPUInfo *gpu){
 
      int i,iter;
      float  minstep=1.f; //MIN(MIN(cfg->steps.x,cfg->steps.y),cfg->steps.z);
+
      float4 p0=float4(cfg->srcpos.x,cfg->srcpos.y,cfg->srcpos.z,1.f);
+     // leiming
+     /*
+     half p0Half[4]={approx_float_to_half(cfg->srcpos.x),                       
+	 approx_float_to_half(cfg->srcpos.y),                                   
+	 approx_float_to_half(cfg->srcpos.z),                                   
+	 approx_float_to_half(1.f)};
+	 */
+     half ps_x = approx_float_to_half(cfg->srcpos.x);
+     half ps_y = approx_float_to_half(cfg->srcpos.y);
+     half ps_z = approx_float_to_half(cfg->srcpos.z);
+     half ps_w = approx_float_to_half(1.f);
+
      float4 c0=cfg->srcdir;
      float3 maxidx=float3(cfg->dim.x,cfg->dim.y,cfg->dim.z);
      float *energy;
@@ -1198,7 +1234,13 @@ void mcx_run_simulation(Config *cfg,GPUInfo *gpu){
      unsigned int is2d=(cfg->dim.x==1 ? 1 : (cfg->dim.y==1 ? 2 : (cfg->dim.z==1 ? 3 : 0)));
      MCXParam param={cfg->steps,minstep,0,0,cfg->tend,R_C0*cfg->unitinmm,
                      (uint)cfg->issave2pt,(uint)cfg->isreflect,(uint)cfg->isrefint,(uint)cfg->issavedet,1.f/cfg->tstep,
-		     p0,c0,maxidx,uint3(0,0,0),cp0,cp1,uint2(0,0),cfg->minenergy,
+		     p0,c0,
+		     //p0Half, // leiming
+		     ps_x,
+		     ps_y,
+		     ps_z,
+		     ps_w,
+		     maxidx,uint3(0,0,0),cp0,cp1,uint2(0,0),cfg->minenergy,
                      cfg->sradius*cfg->sradius,minstep*R_C0*cfg->unitinmm,cfg->srctype,
 		     cfg->srcparam1,cfg->srcparam2,cfg->voidtime,cfg->maxdetphoton,
 		     cfg->medianum-1,cfg->detnum,0,0,cfg->reseedlimit,ABS(cfg->sradius+2.f)<EPS /*isatomic*/,

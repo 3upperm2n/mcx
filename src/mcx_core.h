@@ -105,6 +105,10 @@ typedef struct  __align__(16) KernelParams {
   float  Rtstep;
   float4 ps,c0;
   //half psHalf[4]; // leiming 
+  half ps_x;
+  half ps_y;
+  half ps_z;
+  half ps_w;
   float3 maxidx;
   uint3  dimlen,cp0,cp1;
   uint2  cachebox;
