@@ -31,6 +31,9 @@
 // 
 // It is recommended to use the more robust versions in production code.
 
+#ifndef _FP16_CONVERSION_H
+#define _FP16_CONVERSION_H
+
 typedef unsigned uint;
 
 union FP32
@@ -112,3 +115,5 @@ static float half_to_float(half hf)
     o.u |= (h.u & 0x8000) << 16;    // sign bit
     return o.f;
 }
+
+#endif

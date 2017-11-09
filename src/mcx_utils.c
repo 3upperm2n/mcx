@@ -37,6 +37,9 @@
 #include "mcx_const.h"
 #include "mcx_shapes.h"
 
+//#include <cuda_fp16.h>
+//#include "fp16_conversion.h"   // host function for half conversion
+
 #define FIND_JSON_KEY(id,idfull,parent,fallback,val) \
                     ((tmp=cJSON_GetObjectItem(parent,id))==0 ? \
                                 ((tmp=cJSON_GetObjectItem(root,idfull))==0 ? fallback : tmp->val) \
@@ -138,6 +141,7 @@ void mcx_initcfg(Config *cfg){
      cfg->maxvoidstep=1000;
      cfg->voidtime=1;
      cfg->srcpattern=NULL;
+     cfg->srcpatternHalf=NULL; // leiming
      cfg->debuglevel=0;
      cfg->issaveseed=0;
      cfg->issaveexit=0;
@@ -696,11 +700,16 @@ void mcx_loadconfig(FILE *in, Config *cfg){
                FILE *fp;
                if(cfg->srcpattern) free(cfg->srcpattern);
                cfg->srcpattern=(float*)calloc((cfg->srcparam1.w*cfg->srcparam2.w),sizeof(float));
+
+               if(cfg->srcpatternHalf) free(cfg->srcpatternHalf); // leiming
+               cfg->srcpatternHalf=(half*)calloc((cfg->srcparam1.w*cfg->srcparam2.w),sizeof(half));
+
                MCX_ASSERT(fscanf(in, "%s", patternfile)==1);
                fp=fopen(patternfile,"rb");
                if(fp==NULL)
                      MCX_ERROR(-6,"pattern file can not be opened");
                MCX_ASSERT(fread(cfg->srcpattern,cfg->srcparam1.w*cfg->srcparam2.w,sizeof(float),fp)==sizeof(float));
+               MCX_ASSERT(fread(cfg->srcpatternHalf,cfg->srcparam1.w*cfg->srcparam2.w,sizeof(half),fp)==sizeof(half));
                fclose(fp);
            }
 	}else

@@ -31,6 +31,8 @@
 #include "float.h"
 #include "nifti1.h"
 
+#include <cuda_fp16.h>
+
 #define EPS                FLT_EPSILON                   //round-off limit
 #define VERY_BIG           (1.f/FLT_EPSILON)             //a big number
 
@@ -162,6 +164,7 @@ typedef struct MCXConfig{
         float* srcpattern;  /**<a string for the source form, options include "pencil","isotropic",\
 	                        "cone","gaussian","planar", "pattern","fourier","arcsine","disk",\
 				"fourierx","fourierx2d","zgaussian","line","slit"*/
+	half* srcpatternHalf; // leiming
 	Replay replay;
 	void *seeddata;
         int replaydet;      /**<the detector id for which to replay the detected photons, start from 1*/
