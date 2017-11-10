@@ -500,6 +500,11 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 				 rv->z+(gcfg->srcparam1.z+gcfg->srcparam2.z)*0.5f);
 
 
+		      rvHalf[0] = hadd(rvHalf[0],hmul(hadd(gcfg->srcparam1_x, gcfg->srcparam2_x), float2half(0.5f)));
+		      rvHalf[1] = hadd(rvHalf[1],hmul(hadd(gcfg->srcparam1_x, gcfg->srcparam2_x), float2half(0.5f)));
+		      rvHalf[2] = hadd(rvHalf[2],hmul(hadd(gcfg->srcparam1_x, gcfg->srcparam2_x), float2half(0.5f)));
+
+
 
 		      break;
 		}
