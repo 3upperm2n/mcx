@@ -35,6 +35,7 @@
 // leiming: redefine half intrinsics
 #define float2half(x) __float2half(x)
 #define hmul(x,y) __hmul(x,y)
+#define hsub(x,y) __hsub(x,y)
 #define hadd(x,y) __hadd(x,y)
 
 #if defined(USE_XORSHIFT128P_RAND)
@@ -512,6 +513,10 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 		case(MCX_SRC_FOURIERX2D): { // [v1x][v1y][v1z][|v2|]; [kx][ky][phi0][M], unit(v0) x unit(v1)=unit(v2)
 		      float rx=rand_uniform01(t);
 		      float ry=rand_uniform01(t);
+
+		      half rxHalf = float2half(rx);
+		      half ryHalf = float2half(ry);
+
 		      float4 v2=gcfg->srcparam1;
 		      // calculate v2 based on v2=|v2| * unit(v0) x unit(v1)
 		      v2.w*=rsqrt(gcfg->srcparam1.x*gcfg->srcparam1.x+gcfg->srcparam1.y*gcfg->srcparam1.y+gcfg->srcparam1.z*gcfg->srcparam1.z);
@@ -522,6 +527,35 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 					   p->y+rx*gcfg->srcparam1.y+ry*v2.y,
 					   p->z+rx*gcfg->srcparam1.z+ry*v2.z,
 					   p->w);
+
+		      // v2 in half
+		      half v2_w, v2_x, v2_y, v2_z;
+
+		      v2_x = gcfg->srcparam1_x;
+		      v2_y = gcfg->srcparam1_y;
+		      v2_z = gcfg->srcparam1_z;
+		      v2_w = gcfg->srcparam1_w;
+
+		      v2_w = hmul(v2_w,hrsqrt(hadd(hadd(hmul(gcfg->srcparam1_x, gcfg->srcparam1_x), 
+				  hmul(gcfg->srcparam1_y, gcfg->srcparam1_y)),
+			      hmul(gcfg->srcparam1_z, gcfg->srcparam1_z))));
+
+		      half c0x,c0y,c0z;
+		      c0x = float2half(gcfg->c0.x);
+		      c0y = float2half(gcfg->c0.y);
+		      c0z = float2half(gcfg->c0.z);
+
+		      v2_x = hmul(hsub(hmul(c0y, gcfg->srcparam1_z),hmul(c0z, gcfg->srcparam1_y)), v2_w);
+		      v2_y = hmul(hsub(hmul(c0z, gcfg->srcparam1_x),hmul(c0x, gcfg->srcparam1_z)), v2_w);
+		      v2_z = hmul(hsub(hmul(c0x, gcfg->srcparam1_y),hmul(c0y, gcfg->srcparam1_x)), v2_w);
+
+		      // update p in half
+		      pHalf[0] = hadd(hadd(hmul(rxHalf, gcfg->srcparam1_x),hmul(ryHalf,v2_x)), pHalf[0]);
+		      pHalf[1] = hadd(hadd(hmul(rxHalf, gcfg->srcparam1_y),hmul(ryHalf,v2_y)), pHalf[1]);
+		      pHalf[2] = hadd(hadd(hmul(rxHalf, gcfg->srcparam1_z),hmul(ryHalf,v2_z)), pHalf[2]);
+
+
+
 		      if(gcfg->srctype==MCX_SRC_FOURIERX2D)
 			 p->w=(sinf((gcfg->srcparam2.x*rx+gcfg->srcparam2.z)*TWO_PI)*sinf((gcfg->srcparam2.y*ry+gcfg->srcparam2.w)*TWO_PI)+1.f)*0.5f; //between 0 and 1
 		      else
