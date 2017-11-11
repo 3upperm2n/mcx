@@ -555,11 +555,24 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 		      pHalf[2] = hadd(hadd(hmul(rxHalf, gcfg->srcparam1_z),hmul(ryHalf,v2_z)), pHalf[2]);
 
 
-
-		      if(gcfg->srctype==MCX_SRC_FOURIERX2D)
+		      if(gcfg->srctype==MCX_SRC_FOURIERX2D) {
 			 p->w=(sinf((gcfg->srcparam2.x*rx+gcfg->srcparam2.z)*TWO_PI)*sinf((gcfg->srcparam2.y*ry+gcfg->srcparam2.w)*TWO_PI)+1.f)*0.5f; //between 0 and 1
-		      else
+			 pHalf[3] = hmul(hadd(hmul(hsin(hmul(hadd(hmul(gcfg->srcparam2_x, rxHalf),gcfg->srcparam2_z), float2half(TWO_PI))),
+			     hsin(hmul(hadd(hmul(gcfg->srcparam2_y, ryHalf),gcfg->srcparam2_w), float2half(TWO_PI)))), float2half(1.f)),
+			     float2half(0.5f));
+
+		      } else {
 			 p->w=(cosf((gcfg->srcparam2.x*rx+gcfg->srcparam2.y*ry+gcfg->srcparam2.z)*TWO_PI)*(1.f-gcfg->srcparam2.w)+1.f)*0.5f; //between 0 and 1
+
+			 pHalf[3] = hmul(hadd(hmul(hcos(hmul(hadd(hadd(hmul(gcfg->srcparam2_x, rxHalf), 
+					     hmul(gcfg->srcparam2_y, ryHalf)), 
+					 gcfg->srcparam2_z), 
+				     float2half(TWO_PI))),
+			     hsub(float2half(1.f), gcfg->srcparam2_w)), float2half(1.f)), float2half(0.5f));
+
+		      }
+
+		      //tbc
    
 		      *idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
 		      if(p->x<0.f || p->y<0.f || p->z<0.f || p->x>=gcfg->maxidx.x || p->y>=gcfg->maxidx.y || p->z>=gcfg->maxidx.z){
