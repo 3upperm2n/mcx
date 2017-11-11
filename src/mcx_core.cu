@@ -572,17 +572,23 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 
 		      }
 
-		      //tbc
-   
 		      *idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
 		      if(p->x<0.f || p->y<0.f || p->z<0.f || p->x>=gcfg->maxidx.x || p->y>=gcfg->maxidx.y || p->z>=gcfg->maxidx.z){
 			  *mediaid=0;
 		      }else{
 			  *mediaid=media[*idx1d];
 		      }
+
                       *rv=float3(rv->x+(gcfg->srcparam1.x+v2.x)*0.5f,
 		                 rv->y+(gcfg->srcparam1.y+v2.y)*0.5f,
 				 rv->z+(gcfg->srcparam1.z+v2.z)*0.5f);
+
+		      // leiming: 
+		      rvHalf[0] = hadd(rvHalf[0], hmul(hadd(gcfg->srcparam1_x, v2_x), float2half(0.5f)));
+		      rvHalf[1] = hadd(rvHalf[1], hmul(hadd(gcfg->srcparam1_y, v2_y), float2half(0.5f)));
+		      rvHalf[2] = hadd(rvHalf[2], hmul(hadd(gcfg->srcparam1_z, v2_z), float2half(0.5f)));
+
+
 		      break;
 		}
 		case(MCX_SRC_DISK):
