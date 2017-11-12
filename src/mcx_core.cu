@@ -37,6 +37,7 @@
 #define hmul(x,y) __hmul(x,y)
 #define hsub(x,y) __hsub(x,y)
 #define hadd(x,y) __hadd(x,y)
+//#define hdiv(x,y) __hdiv(x,y)   // cuda 80 use hdiv, cuda 90 use __hdiv
 
 #if defined(USE_XORSHIFT128P_RAND)
     #include "xorshift128p_rand.cu" // use xorshift128+ RNG (XORSHIFT128P)
@@ -583,7 +584,7 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 		                 rv->y+(gcfg->srcparam1.y+v2.y)*0.5f,
 				 rv->z+(gcfg->srcparam1.z+v2.z)*0.5f);
 
-		      // leiming: 
+		      // leiming 
 		      rvHalf[0] = hadd(rvHalf[0], hmul(hadd(gcfg->srcparam1_x, v2_x), float2half(0.5f)));
 		      rvHalf[1] = hadd(rvHalf[1], hmul(hadd(gcfg->srcparam1_y, v2_y), float2half(0.5f)));
 		      rvHalf[2] = hadd(rvHalf[2], hmul(hadd(gcfg->srcparam1_z, v2_z), float2half(0.5f)));
@@ -598,15 +599,34 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 		      float sphi, cphi;
 		      float phi=TWO_PI*rand_uniform01(t);
 		      sincosf(phi,&sphi,&cphi);
+
+		      half phi_half = hmul(float2half(TWO_PI), float2half(rand_uniform01(t)));
+		      half sphi_half, cphi_half;
+		      sphi_half = hsin(phi_half);
+		      cphi_half = hcos(phi_half);
+
 		      float r;
-		      if(gcfg->srctype==MCX_SRC_DISK)
+		      half rHalf;
+		      if(gcfg->srctype==MCX_SRC_DISK) {
 			  r=sqrtf(rand_uniform01(t))*gcfg->srcparam1.x;
-		      else if(fabs(gcfg->c0.w) < 1e-5f || fabs(gcfg->srcparam1.y) < 1e-5f)
+			  rHalf = hmul(hsqrt(float2half(rand_uniform01(t))), gcfg->srcparam1_x);
+
+		      } else if(fabs(gcfg->c0.w) < 1e-5f || fabs(gcfg->srcparam1.y) < 1e-5f) {
 		          r=sqrtf(-0.5f*logf(rand_uniform01(t)))*gcfg->srcparam1.x;
-		      else{
+			  rHalf = hmul(hsqrt(hmul(hlog(float2half(rand_uniform01(t))), float2half(-0.5f))), gcfg->srcparam1_x);
+		      
+		      } else {
 		          r=gcfg->srcparam1.x*gcfg->srcparam1.x*M_PI/gcfg->srcparam1.y; //Rayleigh range
 		          r=sqrtf(-0.5f*logf(rand_uniform01(t))*(1.f+(gcfg->c0.w*gcfg->c0.w/(r*r))))*gcfg->srcparam1.x;
+
+
+			  rHalf = hdiv(hmul(hmul(gcfg->srcparam1_x, gcfg->srcparam1_x), float2half(M_PI)), gcfg->srcparam1_y);
+			  rHalf = hmul(hsqrt(hmul(hmul(hlog(float2half(rand_uniform01(t))), float2half(-0.5f)),
+			      hadd(hdiv(float2half(gcfg->c0.w*gcfg->c0.w), hmul(rHalf, rHalf)), float2half(1.f)))),
+			      gcfg->srcparam1_x);
+
                       }
+
 		      if( v->z>-1.f+EPS && v->z<1.f-EPS ) {
 			  float tmp0=1.f-v->z*v->z;
 			  float tmp1=r*rsqrtf(tmp0);
