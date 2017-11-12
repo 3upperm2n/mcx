@@ -819,7 +819,10 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 					   p->y+r*gcfg->srcparam1.y,
 					   p->z+r*gcfg->srcparam1.z,
 					   p->w);
-		      // tbc
+		      pHalf[0] = float2half(p->x);
+		      pHalf[1] = float2half(p->y);
+		      pHalf[2] = float2half(p->z);
+		      pHalf[3] = float2half(p->w);
 
 
 		      if(gcfg->srctype==MCX_SRC_LINE){
@@ -828,15 +831,29 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 			      s=1.f-2.f*rand_uniform01(t);
 			      q=sqrt(1.f-v->x*v->x-v->y*v->y)*(rand_uniform01(t)>0.5f ? 1.f : -1.f);
 			      *((float4*)v)=float4(v->y*q-v->z*s,v->z*r-v->x*q,v->x*s-v->y*r,v->nscat);
+
+			      // leiming :update v in half
+			      vHalf->x = float2half(v->x);
+			      vHalf->y = float2half(v->y);
+			      vHalf->z = float2half(v->z);
+			      vHalf->nscat = float2half(v->nscat);
 		      }
+
                       *rv=float3(rv->x+(gcfg->srcparam1.x)*0.5f,
 		                 rv->y+(gcfg->srcparam1.y)*0.5f,
 				 rv->z+(gcfg->srcparam1.z)*0.5f);
+
+		      rvHalf[0] = float2half(rv->x);
+		      rvHalf[1] = float2half(rv->y);
+		      rvHalf[2] = float2half(rv->z);
+
+
                       *Lmove=(gcfg->srctype==MCX_SRC_SLIT)?-1.f:0.f;
 		      break;
 		}
 	  }
 
+	  // tbc
           if(*Lmove<0.f && gcfg->c0.w!=0.f){ // if beam focus is set, determine the incident angle
 	        float Rn2=(gcfg->c0.w > 0.f) - (gcfg->c0.w < 0.f);
 	        rv->x+=gcfg->c0.w*v->x;
