@@ -630,16 +630,34 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 		      if( v->z>-1.f+EPS && v->z<1.f-EPS ) {
 			  float tmp0=1.f-v->z*v->z;
 			  float tmp1=r*rsqrtf(tmp0);
+
+			  half tmp0_half = float2half(tmp0);
+			  half tmp1_half = hmul(rHalf, hrsqrt(tmp0_half));
+
 			  *((float4*)p)=float4(
 			       p->x+tmp1*(v->x*v->z*cphi - v->y*sphi),
 			       p->y+tmp1*(v->y*v->z*cphi + v->x*sphi),
 			       p->z-tmp1*tmp0*cphi                   ,
 			       p->w
 			  );
+
+			  pHalf[0] = hadd(hmul(hsub(hmul(hmul(vHalf->x, vHalf->z),cphi_half),
+					  hmul(vHalf->y, sphi_half)), tmp1_half), pHalf[0]);
+
+			  pHalf[1] = hadd(hmul(hadd(hmul(hmul(vHalf->y, vHalf->z),cphi_half),
+					  hmul(vHalf->x, sphi_half)), tmp1_half), pHalf[1]);
+
+			  pHalf[2] = hsub(pHalf[2], hmul(hmul(tmp1_half, tmp0_half), cphi_half));
+
+
 			  GPUDEBUG(("new dir: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
 		      }else{
 			  p->x+=r*cphi;
 			  p->y+=r*sphi;
+
+			  pHalf[0] = hadd(hmul(rHalf, cphi_half), pHalf[0]);
+			  pHalf[1] = hadd(hmul(rHalf, sphi_half), pHalf[1]);
+
 			  GPUDEBUG(("new dir-z: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
 		      }
 		      *idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
