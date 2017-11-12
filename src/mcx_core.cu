@@ -34,6 +34,7 @@
 
 // leiming: redefine half intrinsics
 #define float2half(x) __float2half(x)
+#define hneg(x) __hneg(x)
 #define hmul(x,y) __hmul(x,y)
 #define hsub(x,y) __hsub(x,y)
 #define hadd(x,y) __hadd(x,y)
@@ -362,19 +363,58 @@ __device__ inline void rotatevector2d(MCXdir *v, float stheta, float ctheta){
       GPUDEBUG(("new dir: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
 }
 
-__device__ inline void rotatevector(MCXdir *v, float stheta, float ctheta, float sphi, float cphi){
+//__device__ inline void rotatevector(MCXdir *v, float stheta, float ctheta, float sphi, float cphi){
+__device__ inline void rotatevector(MCXdir *v, hMCXdir *vHalf,
+	float stheta, float ctheta, float sphi, float cphi,
+	half stheta_half, half ctheta_half, half sphi_half, half cphi_half){
+
       if( v->z>-1.f+EPS && v->z<1.f-EPS ) {
+
    	  float tmp0=1.f-v->z*v->z;
    	  float tmp1=stheta*rsqrtf(tmp0);
+
+	  half tmp0_half = float2half(tmp0);
+	  half tmp1_half = float2half(tmp1);
+/*
+	  // leiming
+	  half tmp0_half = hsub(float2half(1.f), hmul(vHalf->z, vHalf->z));
+	  half tmp1_half = hmul(hrsqrt(tmp0_half), stheta_half);
+	  */
+
    	  *((float4*)v)=float4(
    	       tmp1*(v->x*v->z*cphi - v->y*sphi) + v->x*ctheta,
    	       tmp1*(v->y*v->z*cphi + v->x*sphi) + v->y*ctheta,
    	      -tmp1*tmp0*cphi                    + v->z*ctheta,
    	       v->nscat
    	  );
+
+	  half vhalf_x = (*vHalf).x;
+	  half vhalf_y = (*vHalf).y;
+	  half vhalf_z = (*vHalf).z;
+
+	  /*
+	  // Note: absorbed energy wil be screwed if added the lines below!
+	  (*vHalf).x = hadd(hmul(hsub(hmul(hmul(vhalf_x, vhalf_z), cphi_half),
+			  hmul(vhalf_y, sphi_half)), tmp1_half), hmul(vhalf_x, ctheta_half));
+
+	  (*vHalf).y = hadd(hmul(hadd(hmul(hmul(vhalf_y, vhalf_z), cphi_half),
+			  hmul(vhalf_x, sphi_half)), tmp1_half), hmul(vhalf_y, ctheta_half));
+
+	  (*vHalf).z =  hsub(hmul(vhalf_z, ctheta_half), 
+		  hmul(hmul(tmp1_half, tmp0_half), cphi_half));
+	  */
+
       }else{
    	  *((float4*)v)=float4(stheta*cphi,stheta*sphi,(v->z>0.f)?ctheta:-ctheta,v->nscat);
+
+	  /*
+	  // Note: absorbed energy wil be screwed if added the lines below!
+	  (*vHalf).x = hmul(stheta_half, cphi_half);
+	  (*vHalf).y = hmul(stheta_half, sphi_half);
+	  (*vHalf).z = (v->z>0.f) ? ctheta_half : hneg(ctheta_half);  // leiming
+	  */
       }
+
       GPUDEBUG(("new dir: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
 }
 
@@ -607,6 +647,7 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 
 		      float r;
 		      half rHalf;
+
 		      if(gcfg->srctype==MCX_SRC_DISK) {
 			  r=sqrtf(rand_uniform01(t))*gcfg->srcparam1.x;
 			  rHalf = hmul(hsqrt(float2half(rand_uniform01(t))), gcfg->srcparam1_x);
@@ -676,28 +717,98 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 		      float ang,stheta,ctheta,sphi,cphi;
 		      ang=TWO_PI*rand_uniform01(t); //next arimuth angle
 		      sincosf(ang,&sphi,&cphi);
+
+		      // leiming
+		      half ang_half, sphi_half, cphi_half;
+		      ang_half = float2half(ang);
+		      sphi_half = hsin(ang_half);
+		      cphi_half = hcos(ang_half);
+		      /*
+		      ang_half = hmul(float2half(TWO_PI), float2half(rand_uniform01(t)));
+		      sphi_half = hsin(ang_half);
+		      cphi_half = hcos(ang_half);
+		      */
+
 		      if(gcfg->srctype==MCX_SRC_CONE){  // a solid-angle section of a uniform sphere
 			  do{
 			      ang=(gcfg->srcparam1.y>0) ? TWO_PI*rand_uniform01(t) : acosf(2.f*rand_uniform01(t)-1.f); //sine distribution
+
+			//      // leiming : no hacos found! 
+			//      ang_half = (gcfg->srcparam1.y>0) ? hmul(float2half(TWO_PI), float2half(rand_uniform01(t)))  :
+			//	 float2half(acosf(2.f*rand_uniform01(t)-1.f)); 
+			      ang_half = float2half(ang);
+
 			  }while(ang>gcfg->srcparam1.x);
+
 		      }else{
-			  if(gcfg->srctype==MCX_SRC_ISOTROPIC) // uniform sphere
+
+			  if(gcfg->srctype==MCX_SRC_ISOTROPIC){ // uniform sphere 
 			      ang=acosf(2.f*rand_uniform01(t)-1.f); //sine distribution
-			  else
+
+			      //ang_half = float2half(acosf(2.f*rand_uniform01(t)-1.f)); //sine distribution
+			      ang_half = float2half(ang);
+			  } else {
 			      ang=ONE_PI*rand_uniform01(t); //uniform distribution in zenith angle, arcsine
+
+			      //ang_half = hmul(float2half(ONE_PI), float2half(rand_uniform01(t)));
+			      ang_half = float2half(ang);
+			  }
 		      }
+
 		      sincosf(ang,&stheta,&ctheta);
-		      rotatevector(v,stheta,ctheta,sphi,cphi);
+
+		      half stheta_half, ctheta_half;
+		      stheta_half = hsin(ang_half);
+		      ctheta_half = hcos(ang_half);
+
+		      /*
+		      // leiming
+		      stheta_half = hsin(ang_half);
+		      ctheta_half = hcos(ang_half);
+		      */
+
+		      //rotatevector(v,stheta,ctheta,sphi,cphi);
+		      rotatevector(v, vHalf, stheta,ctheta,sphi,cphi, stheta_half, ctheta_half, sphi_half, cphi_half);
+
                       *Lmove=0.f;
 		      break;
 		}
 		case(MCX_SRC_ZGAUSSIAN): {
 		      float ang,stheta,ctheta,sphi,cphi;
 		      ang=TWO_PI*rand_uniform01(t); //next arimuth angle
+
 		      sincosf(ang,&sphi,&cphi);
+
+		      half ang_half, sphi_half, cphi_half;
+		      ang_half = float2half(ang);
+		      sphi_half = hsin(ang_half);
+		      cphi_half = hcos(ang_half);
+
+		      /*
+		      // leiming
+		      ang_half = hmul(float2half(TWO_PI), float2half(rand_uniform01(t)));
+
+		      */
+
+
 		      ang=sqrtf(-2.f*logf(rand_uniform01(t)))*(1.f-2.f*rand_uniform01(t))*gcfg->srcparam1.x;
+		      ang_half = float2half(ang);
+
+		      /*
+		      // leiming
+		      ang_half = hmul(hmul(hsqrt(hmul(hlog(float2half(rand_uniform01(t))), float2half(-2.f))),
+			  hsub(float2half(1.f), hmul(float2half(2.f), float2half(rand_uniform01(t))))), gcfg->srcparam1_x);
+			  */
+
 		      sincosf(ang,&stheta,&ctheta);
-		      rotatevector(v,stheta,ctheta,sphi,cphi);
+
+		      half stheta_half, ctheta_half;
+		      stheta_half = hsin(ang_half);
+		      ctheta_half = hcos(ang_half);
+
+		      //rotatevector(v,stheta,ctheta,sphi,cphi);
+		      rotatevector(v, vHalf, stheta,ctheta,sphi,cphi, stheta_half, ctheta_half, sphi_half, cphi_half);
+
                       *Lmove=0.f;
 		      break;
 		}
@@ -708,6 +819,9 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 					   p->y+r*gcfg->srcparam1.y,
 					   p->z+r*gcfg->srcparam1.z,
 					   p->w);
+		      // tbc
+
+
 		      if(gcfg->srctype==MCX_SRC_LINE){
 			      float s,q;
 			      r=1.f-2.f*rand_uniform01(t);
@@ -905,10 +1019,23 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
                        //random arimuthal angle
 	               float cphi=1.f,sphi=0.f,theta,stheta,ctheta;
                        float tmp0=0.f;
+
+		       // leiming
+		       half stheta_half, ctheta_half;
+		       half cphi_half = float2half(1.f);
+		       half sphi_half = float2half(0.f);
+		       half tmp0_half = float2half(0.f);
+
 		       if(!gcfg->is2d){
 		           tmp0=TWO_PI*rand_next_aangle(t); //next arimuth angle
                            sincosf(tmp0,&sphi,&cphi);
+
+			   tmp0_half = float2half(tmp0);
+			   sphi_half = hsin(tmp0_half);
+			   cphi_half = hcos(tmp0_half);
+			   //tmp0_half = hmul(float2half(TWO_PI), float2half(rand_next_aangle(t)));
 		       }
+
                        GPUDEBUG(("scat phi=%f\n",tmp0));
 		       tmp0=(v->nscat > gcfg->gscatter) ? 0.f : prop.g;
 
@@ -927,15 +1054,29 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 		           theta=acosf(tmp0);
 		           stheta=sinf(theta);
 		           ctheta=tmp0;
+
+			   // tmp
+			   tmp0_half = float2half(tmp0);
+			   stheta_half = hsin(float2half(theta));
+			   ctheta_half = tmp0_half; 
+
                        }else{
 			   theta=acosf(2.f*rand_next_zangle(t)-1.f);
                            sincosf(theta,&stheta,&ctheta);
+
+			   half theta_half = float2half(theta);
+			   stheta_half = hsin(theta_half);
+			   ctheta_half = hcos(theta_half);
                        }
+
                        GPUDEBUG(("scat theta=%f\n",theta));
-		       if(gcfg->is2d)
+		       if(gcfg->is2d) {
 		           rotatevector2d(v,stheta,ctheta);
-		       else
-                           rotatevector(v,stheta,ctheta,sphi,cphi);
+		       } else {
+                           //rotatevector(v,stheta,ctheta,sphi,cphi);
+                           rotatevector(v, vHalf, stheta,ctheta,sphi,cphi, stheta_half,ctheta_half, sphi_half, cphi_half);
+		       }
+
                        v->nscat++;
                        rv=float3(__fdividef(1.f,v->x),__fdividef(1.f,v->y),__fdividef(1.f,v->z));
                        if(gcfg->outputtype==otWP){
