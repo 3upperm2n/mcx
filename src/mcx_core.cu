@@ -856,16 +856,41 @@ __device__ inline int launchnewphoton(MCXpos *p, half *pHalf,
 	  // tbc
           if(*Lmove<0.f && gcfg->c0.w!=0.f){ // if beam focus is set, determine the incident angle
 	        float Rn2=(gcfg->c0.w > 0.f) - (gcfg->c0.w < 0.f);
+
 	        rv->x+=gcfg->c0.w*v->x;
 		rv->y+=gcfg->c0.w*v->y;
 		rv->z+=gcfg->c0.w*v->z;
+
+		// leiming
+		half Rn2_half = float2half(Rn2);
+		half c0w_half = float2half(gcfg->c0.w);
+		rvHalf[0] = hadd(float2half(rv->x),hmul(c0w_half, float2half(v->x)));
+		rvHalf[1] = hadd(float2half(rv->y),hmul(c0w_half, float2half(v->y)));
+		rvHalf[2] = hadd(float2half(rv->z),hmul(c0w_half, float2half(v->y)));
+
                 v->x=Rn2*(rv->x-p->x);
                 v->y=Rn2*(rv->y-p->y);
                 v->z=Rn2*(rv->z-p->z);
+
+		// leiming
+		vHalf->x = hmul(Rn2_half,hsub(rvHalf[0], pHalf[0]));
+		vHalf->y = hmul(Rn2_half,hsub(rvHalf[1], pHalf[1]));
+		vHalf->z = hmul(Rn2_half,hsub(rvHalf[2], pHalf[2]));
+
 		Rn2=rsqrtf(v->x*v->x+v->y*v->y+v->z*v->z); // normalize
+		
+		// leiming
+		Rn2_half = hrsqrt(hadd(hadd(hmul(vHalf->x, vHalf->x), hmul(vHalf->y, vHalf->y)),hmul(vHalf->z, vHalf->z)));
+
                 v->x*=Rn2;
                 v->y*=Rn2;
                 v->z*=Rn2;
+
+		// leiming
+		vHalf->x = hmul(Rn2_half, vHalf->x);
+		vHalf->y = hmul(Rn2_half, vHalf->y);
+		vHalf->z = hmul(Rn2_half, vHalf->z);
+
 	  }
 
           *rv=float3(__fdividef(1.f,v->x),__fdividef(1.f,v->y),__fdividef(1.f,v->z));
