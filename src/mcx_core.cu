@@ -35,6 +35,7 @@
 // leiming: redefine half intrinsics
 #define float2half(x) __float2half(x)
 #define hneg(x) __hneg(x)
+#define hge(x,y) __hge(x,y)
 #define hmul(x,y) __hmul(x,y)
 #define hsub(x,y) __hsub(x,y)
 #define hadd(x,y) __hadd(x,y)
@@ -199,7 +200,9 @@ __device__ inline float mcx_nextafterf(float a, int dir){
 //__device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,int *id){
 __device__ inline float hitgrid(float3 *p0, half *p0Half,  // leiming
 	float3 *v, hMCXDir *vHalf,
-	float *htime,float* rv,int8_t *id){
+	float *htime,
+	float* rv, half *rvHalf, 
+	int8_t *id){
       float dist, xi[3];
 
       /*
@@ -224,6 +227,15 @@ __device__ inline float hitgrid(float3 *p0, half *p0Half,  // leiming
       htime[0]=fabs((floorf(p0->x)+(v->x>0.f)-p0->x)*rv[0]); // absolute distance of travel in x/y/z
       htime[1]=fabs((floorf(p0->y)+(v->y>0.f)-p0->y)*rv[1]);
       htime[2]=fabs((floorf(p0->z)+(v->z>0.f)-p0->z)*rv[2]);
+
+      // leiming: tbc
+      half zero_half = float2half(0.f);
+      half one_half = float2half(1.f);
+//      hfloor(p0Half[0])
+//	  hge(vHalf->x, zero_half)
+
+
+
 
       //get the direction with the smallest time-of-flight
       dist=fminf(fminf(htime[0],htime[1]),htime[2]);
@@ -1031,7 +1043,14 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 	 n_len[idx]=*((float4*)(&f));
          return;
      }
+
      rv=float3(__fdividef(1.f,v->x),__fdividef(1.f,v->y),__fdividef(1.f,v->z));
+
+     //// leiming
+     //rvHalf[0] = float2half(rv.x);
+     //rvHalf[1] = float2half(rv.y);
+     //rvHalf[2] = float2half(rv.z);
+
      isdet=mediaid & DET_MASK;
      mediaid &= MED_MASK; // keep isdet to 0 to avoid launching photon ina 
 
@@ -1143,10 +1162,30 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 
           n1=prop.n;
 	  *((float4*)(&prop))=gproperty[mediaid & MED_MASK];
-	  
+
+	  // leiming
+	  pHalf[0] = p.x;
+	  pHalf[1] = p.y;
+	  pHalf[2] = p.z;
+
+	  vHalf.x = v.x;
+	  vHalf.y = v.y;
+	  vHalf.z = v.z;
+
+	  // leiming
+	  rvHalf[0] = float2half(rv.x);
+	  rvHalf[1] = float2half(rv.y);
+	  rvHalf[2] = float2half(rv.z);
+
+
 	  len=(gcfg->faststep) ? gcfg->minstep : hitgrid((float3*)&p, &pHalf[0],  // leiming
 		  (float3*)v, vHalf, // leiming
-		  &(htime.x),&rv.x,&flipdir); // propagate the photon to the first intersection to the grid
+		  &(htime.x),
+		  &rv.x, &rvHalf[0], 
+		  &flipdir); // propagate the photon to the first intersection to the grid
+
+
+
 	  slen=len*prop.mus*(v->nscat+1.f > gcfg->gscatter ? (1.f-prop.g) : 1.f); //unitless (minstep=grid, mus=1/grid)
 
           GPUDEBUG(("p=[%f %f %f] -> <%f %f %f>*%f -> hit=[%f %f %f] flip=%d\n",p.x,p.y,p.z,v->x,v->y,v->z,len,htime.x,htime.y,htime.z,flipdir));
