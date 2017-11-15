@@ -6,6 +6,10 @@
 
 BACKEND ?= cuda
 
+ROOTDIR ?= ..
+MCXDIR  ?= $(ROOTDIR)
+MCXSRC :=$(MCXDIR)/src
+
 ifeq ($(BACKEND),ocelot)
   CC?=g++
 endif
@@ -17,9 +21,17 @@ MEX=mex
 AR=$(CC)
 
 BINARY=mcx
-OUTPUT_DIR=../bin
+OUTPUT_DIR=$(MCXDIR)/bin
 
-INCLUDEDIRS=-I/usr/local/cuda/include
+DOXY       := doxygen
+DOCDIR     := $(MCXDIR)/doc
+DOXYCFG=mcxdoxy.cfg
+
+#CUDA_PATH=/pub/cuda-8.0
+CUDA_PATH=/usr/local/cuda-8.0
+
+#INCLUDEDIRS=-I/usr/local/cuda/include
+INCLUDEDIRS=-I$(CUDA_PATH)/include
 
 CUDART=-lcudart
 CUOMPLINK=
@@ -57,8 +69,12 @@ FILES=mcx_core mcx_utils mcx_shapes tictoc mcextreme cjson/cJSON
 ifeq ($(findstring CYGWIN,$(PLATFORM)), CYGWIN)
   CC=nvcc
   CUOMPLINK=-Xcompiler
-  LINKOPT=-L/c/CUDA/lib $(CUDART)
-  INCLUDEDIRS +=-I/c/CUDA/include
+  ifeq ($(findstring x86_64,$(ARCH)), x86_64)
+      LINKOPT=-L"$(CUDA_PATH)/lib/x64" $(CUDART)
+  else
+      LINKOPT=-L"$(CUDA_PATH)/lib/Win32" $(CUDART)
+  endif
+  INCLUDEDIRS +=-I"$(CUDA_PATH)/lib/include"
   CPPOPT =-c -D_CRT_SECURE_NO_DEPRECATE -DWIN32
   OBJSUFFIX=.obj
   EXESUFFIX=.exe
@@ -79,9 +95,9 @@ else
      CUCCOPT +=-m64
      ifeq "$(wildcard /usr/local/cuda/lib64)" "/usr/local/cuda/lib64"
         ifeq ($(BACKEND),cuda)
-           LINKOPT=-L/usr/local/cuda/lib64 $(CUDART) -lm -lstdc++
+           LINKOPT=-L$(CUDA_PATH)/lib64 $(CUDART) -lm -lstdc++
         else ifeq ($(BACKEND),cudastatic)
-           LINKOPT=-L/usr/local/cuda/lib64 $(CUDART) -lm -static-libgcc -static-libstdc++
+           LINKOPT=-L$(CUDA_PATH)/lib64 $(CUDART) -lm -static-libgcc -static-libstdc++
         endif
      endif
   endif
@@ -123,7 +139,9 @@ det detbox: BINARY:=$(BINARY)_det
 logbox detbox:          BINARY:=$(BINARY)_cached
 all xorfermi maxwell pascal:    fermi
 maxwell:    CUGENCODE=-arch=compute_20 -code=sm_20 -code=sm_30 -code=sm_35 -code=sm_50 -code=sm_52
-pascal:     CUGENCODE=-arch=compute_20 -code=sm_20 -code=sm_30 -code=sm_35 -code=sm_50 -code=sm_52 -code=sm_61
+#pascal:     CUGENCODE=-arch=compute_20 -code=sm_20 -code=sm_30 -code=sm_35 -code=sm_50 -code=sm_52 -code=sm_61
+#pascal:     CUGENCODE=-arch=sm_61
+pascal:     CUGENCODE=-arch=sm_60
 xormax:     maxwell
 xorpas:     pascal
 xorfermi xormax xorpas:     CUCCOPT+=-DUSE_XORSHIFT128P_RAND
@@ -135,7 +153,7 @@ static:     CUOMPLINK=-Xcompiler
 static:     LINKOPT=$(CUDA_STATIC)
 
 mexbox fermimex:        AR=$(MEX)
-mexbox fermimex:        LINKOPT+= CXXFLAGS='$$CXXFLAGS -DSAVE_DETECTORS -DUSE_CACHEBOX -DMCX_CONTAINER $(OMP) $(MEXCCOPT) $(USERCCOPT)' -lgomp LDFLAGS='$$LDFLAGS $(OMP) $(USERLINKOPT)'
+mexbox fermimex:        LINKOPT+= CXXFLAGS='$$CXXFLAGS -DSAVE_DETECTORS -DUSE_CACHEBOX -DMCX_CONTAINER $(OMP) $(MEXCCOPT) $(USERCCOPT)' LDFLAGS='-L$$TMW_ROOT$$MATLABROOT/sys/os/$$ARCH $$LDFLAGS $(OMP) $(USERLINKOPT)' -liomp5
 mexbox oct octbox fermimex fermioct:    OUTPUT_DIR=../mcxlab
 fermimex:      BINARY=mcxlab
 fermioct:      BINARY=mcxlab.mex
@@ -144,7 +162,7 @@ mexbox octbox fermimex fermioct:    CUCCOPT+=--compiler-options "$(DLLFLAG)" -DM
 mexbox octbox fermimex fermioct:    CPPOPT+=$(DLLFLAG) -DMCX_CONTAINER
 mexbox fermimex:        LINKOPT+=mcxlab.cpp -outdir $(OUTPUT_DIR) $(INCLUDEDIRS)
 
-octbox fermioct:        AR= CXXFLAGS='-DSAVE_DETECTORS -DUSE_CACHEBOX -fopenmp $(MEXCCOPT) $(USERCCOPT)' LDFLAGS='-fopenmp $(USERLINKOPT)' mkoctfile
+octbox fermioct:        AR= CXXFLAGS='-DSAVE_DETECTORS -DUSE_CACHEBOX -fopenmp $(MEXCCOPT) $(USERCCOPT)' LFLAGS='-fopenmp $(USERLINKOPT)' LDFLAGS='$(LFLAGS)' mkoctfile
 fermioct:               BINARY=mcxlab.mex
 octbox:                 BINARY=mcxlab_atom.mex
 octbox fermioct:        LINKOPT+=--mex mcxlab.cpp $(INCLUDEDIRS)
@@ -157,6 +175,10 @@ debug: debugxor
 mex: fermimex
 oct: fermioct
 
+##  Documentation  ##
+doc: makedocdir
+	$(DOXY) $(DOXYCFG)
+
 OBJS      := $(addsuffix $(OBJSUFFIX), $(FILES))
 
 all xor fast log logfast racing xoratomic logatomic xorbox logbox debugxor debuglog \
@@ -164,6 +186,9 @@ all xor fast log logfast racing xoratomic logatomic xorbox logbox debugxor debug
 
 makedirs:
 	@if test ! -d $(OUTPUT_DIR); then $(MKDIR) $(OUTPUT_DIR); fi
+
+makedocdir:
+	@if test ! -d $(DOCDIR); then $(MKDIR) $(DOCDIR); fi
 
 $(OUTPUT_DIR)/$(BINARY): makedirs $(OBJS)
 $(OUTPUT_DIR)/$(BINARY): $(OBJS)
@@ -173,7 +198,8 @@ $(OUTPUT_DIR)/$(BINARY): $(OBJS)
 	$(CC) $(INCLUDEDIRS) $(CPPOPT) -c -o $@  $<
 
 %$(OBJSUFFIX): %.cu
-	$(CUDACC) -c $(CUCCOPT) -o $@  $<
+	$(CUDACC) -c $(CUCCOPT)  -o $@  $<
+	#$(CUDACC) -c $(CUCCOPT) -Xptxas -v  -o $@  $<
 
 clean:
 	-rm -f $(OBJS) $(OUTPUT_DIR)/$(BINARY)$(EXESUFFIX) $(OUTPUT_DIR)/$(BINARY)_atomic$(EXESUFFIX) $(OUTPUT_DIR)/$(BINARY)_det$(EXESUFFIX)

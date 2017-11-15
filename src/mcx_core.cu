@@ -17,6 +17,8 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 
+#include <cuda_fp16.h>
+
 #include "br2cu.h"
 #include "mcx_core.h"
 #include "tictoc.h"
@@ -160,17 +162,108 @@ __device__ inline float mcx_nextafterf(float a, int dir){
       return num.f-gcfg->maxvoidstep;
 }
 
-__device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,int *id){
+__device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,int *id,
+	half2 p1, half2 p2, half2 p1_diff, half2 p2_diff, half2 v1, half2 v2, half2 ht1, half2 ht2, half2 rv1, half2 rv2){
       float dist;
 
+      //printf("p : %f %f %f\n", p0->x, p0->y, p0->z);
+      //printf("(v>0.f) - p : %f %f %f\n", (v->x>0.f) - p0->x, (v->y>0.f) - p0->y, (v->z>0.f) - p0->z);
+
+      /*
       //time-of-flight to hit the wall in each direction
       htime[0]=fabs((floorf(p0->x)+(v->x>0.f)-p0->x)*rv[0]); // absolute distance of travel in x/y/z
       htime[1]=fabs((floorf(p0->y)+(v->y>0.f)-p0->y)*rv[1]);
       htime[2]=fabs((floorf(p0->z)+(v->z>0.f)-p0->z)*rv[2]);
+      */
 
-      //get the direction with the smallest time-of-flight
-      dist=fminf(fminf(htime[0],htime[1]),htime[2]);
-      (*id)=(dist==htime[0]?0:(dist==htime[1]?1:2));
+
+
+
+
+      //printf("htime : %f %f %f\n", htime[0], htime[1], htime[2]);
+
+      /*
+      half2 hh1 = __hgt2(v1, __floats2half2_rn(0.f, 0.f));
+      half2 hh2 = __hgt2(v2, __floats2half2_rn(0.f, 0.f));
+
+      printf("v :\t\t\t %f %f %f\n", v->x, v->y, v->z);
+      printf("v (half) :\t\t %f %f %f\n", __half2float(__low2half(v1)),
+	      __half2float(__high2half(v1)), 
+	      __half2float(__low2half(v2)));
+
+
+      printf("(v>0.f) :\t\t %d %d %d\n", (v->x > 0.f), (v->y > 0.f), (v->z > 0.f));
+      printf("(v>0.f) (half) :\t %f %f %f\n", __half2float(__low2half(hh1)),
+	      __half2float(__high2half(hh1)), 
+	      __half2float(__low2half(hh2)));
+
+
+      printf("p :\t\t\t %f %f %f\n", p0->x, p0->y, p0->z);
+      printf("p (half) :\t\t %f %f %f\n", __half2float(__low2half(p1)),
+		  __half2float(__high2half(p1)),
+		      __half2float(__low2half(p2)));
+
+      printf("floor(p) - p:\t\t %f %f %f\n", floorf(p0->x) - p0->x, 
+	      floorf(p0->y) - p0->y, 
+	      floorf(p0->z) - p0->z);
+
+      printf("floor(p) - p (half) :\t %f %f %f\n", __half2float(__low2half(p1_diff)),
+	      __half2float(__high2half(p1_diff)), 
+	      __half2float(__low2half(p2_diff)));
+	      */
+
+
+
+      //half2 htm1 = __hmul2(__hsub2(__hadd2(p1,__hgt2(v1, __floats2half2_rn(0.f, 0.f))), p1), rv1);
+      //half2 htm2 = __hmul2(__hsub2(__hadd2(p2,__hgt2(v2, __floats2half2_rn(0.f, 0.f))), p2), rv2);
+
+      half2 zero2 = __floats2half2_rn(0.f, 0.f);
+
+      half2 htm1 = __hmul2(__hadd2(p1_diff,__hgt2(v1, zero2 )), rv1);
+      half2 htm2 = __hmul2(__hadd2(p2_diff,__hgt2(v2, zero2 )), rv2);
+
+//      printf("htm (half) : %f %f %f\n", __half2float(__low2half(htm1)),
+//	      __half2float(__high2half(htm1)),
+//	      __half2float(__low2half(htm2)));
+
+      // abs
+      float htm1_0 = fabs(__half2float(__low2half(htm1)));
+      float htm1_1 = fabs(__half2float(__high2half(htm1)));
+      float htm1_2 = fabs(__half2float(__low2half(htm2)));
+      dist=fminf(fminf(htm1_0, htm1_1),htm1_2);
+      (*id)=(dist==htm1_0?0:(dist==htm1_1?1:2));
+
+      //printf("htm (half) : %f %f %f\n", htm1_0, htm1_1, htm1_2);
+      //printf("--------------\n");
+
+
+      ////get the direction with the smallest time-of-flight
+      //dist=fminf(fminf(htime[0],htime[1]),htime[2]);
+      //(*id)=(dist==htime[0]?0:(dist==htime[1]?1:2));
+
+      //half htm1_0 = __low2half(htm1);
+      //half htm1_1 = __high2half(htm1);
+      //half htm1_2 = __low2half(htm2);
+
+/*
+      //----------------//
+      // compute abs()
+      //----------------//
+      half2 minusone = __floats2half2_rn(-1.f, -1.f);
+      half2 cmp1 = __hgt2(htm1, zero2);
+      half2 cmp2 = __hgt2(htm2, zero2);
+      htm1 = __hmul2(__hadd2(__hadd2(cmp1, cmp1), minusone), htm1);
+      htm2 = __hmul2(__hadd2(__hadd2(cmp2, cmp2), minusone), htm2);
+      float htm1_0 = __half2float(__low2half(htm1));
+      float htm1_1 = __half2float(__high2half(htm1));
+      float htm1_2 = __half2float(__low2half(htm2));
+      //printf("abs htm (half) : %f %f %f\n", htm1_0, htm1_1, htm1_2);
+      dist=fminf(fminf(htm1_0, htm1_1),htm1_2);
+      (*id)=(dist==htm1_0?0:(dist==htm1_1?1:2));
+*/
+
+
+
 
       //p0 is inside, p is outside, move to the 1st intersection pt, now in the air side, to be corrected in the else block
       htime[0]=p0->x+dist*v->x;
@@ -240,7 +333,25 @@ __device__ inline int skipvoid(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,uchar m
 		count=0;
 		while(!(p->x>=0.f && p->y>=0.f && p->z>=0.f && p->x < gcfg->maxidx.x
                   && p->y < gcfg->maxidx.y && p->z < gcfg->maxidx.z) || !(media[idx1d] & MED_MASK)){ // at most 3 times
-	            f->t+=gcfg->minaccumtime*hitgrid((float3*)p,(float3*)v,&htime.x,&rv->x,&flipdir);
+		    // leiming
+		    half2 p1_diff = __floats2half2_rn(floorf(p->x) - p->x, floorf(p->y) - p->y); 
+		    half2 p2_diff = __floats2half2_rn(floorf(p->z) - p->z , 0.f); 
+
+		    half2 p1 = __floats2half2_rn(p->x, p->y); 
+		    half2 p2 = __floats2half2_rn(p->z, 0.f); 
+
+		    half2 v1 = __floats2half2_rn(v->x, v->y); 
+		    half2 v2 = __floats2half2_rn(v->z, 0.f); 
+
+		    half2 ht1 = __floats2half2_rn(htime.x, htime.y); 
+		    half2 ht2 = __floats2half2_rn(htime.z, 0.f); 
+
+		    half2 rv1 = __floats2half2_rn(rv->x, rv->y); 
+		    half2 rv2 = __floats2half2_rn(rv->z, 0.f); 
+
+	            f->t+=gcfg->minaccumtime*hitgrid((float3*)p,(float3*)v,&htime.x,&rv->x,&flipdir, 
+			    p1,p2,p1_diff,p2_diff,v1,v2,ht1,ht2,rv1,rv2);
+
                     *((float4*)(p))=float4(htime.x,htime.y,htime.z,p->w);
                     idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
                     GPUDEBUG(("entry p=[%f %f %f] flipdir=%d\n",p->x,p->y,p->z,flipdir));
@@ -688,7 +799,28 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
           n1=prop.n;
 	  *((float4*)(&prop))=gproperty[mediaid & MED_MASK];
 	  
-	  len=(gcfg->faststep) ? gcfg->minstep : hitgrid((float3*)&p,(float3*)v,&(htime.x),&rv.x,&flipdir); // propagate the photon to the first intersection to the grid
+	  // leiming
+	  half2 p1_diff = __floats2half2_rn(floorf(p.x) - p.x, floorf(p.y) - p.y); 
+	  half2 p2_diff = __floats2half2_rn(floorf(p.z) - p.z , 0.f); 
+
+	  half2 p1 = __floats2half2_rn(p.x, p.y); 
+	  half2 p2 = __floats2half2_rn(p.z, 0.f); 
+
+	  half2 v1 = __floats2half2_rn(v->x, v->y); 
+	  half2 v2 = __floats2half2_rn(v->z, 0.f); 
+
+	  half2 ht1 = __floats2half2_rn(htime.x, htime.y); 
+	  half2 ht2 = __floats2half2_rn(htime.z, 0.f); 
+
+	  half2 rv1 = __floats2half2_rn(rv.x, rv.y); 
+	  half2 rv2 = __floats2half2_rn(rv.z, 0.f); 
+
+	  len=(gcfg->faststep) ? gcfg->minstep : hitgrid((float3*)&p,(float3*)v,&(htime.x),&rv.x,&flipdir, 
+		  p1, p2, p1_diff, p2_diff, v1, v2, ht1, ht2, rv1, rv2); // propagate the photon to the first intersection to the grid
+
+
+
+
 	  slen=len*prop.mus; //unitless (minstep=grid, mus=1/grid)
 
           GPUDEBUG(("p=[%f %f %f] -> <%f %f %f>*%f -> hit=[%f %f %f] flip=%d\n",p.x,p.y,p.z,v->x,v->y,v->z,len,htime.x,htime.y,htime.z,flipdir));
