@@ -164,7 +164,6 @@ __device__ inline float mcx_nextafterf(float a, int dir){
 
 __device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,int *id,
 	half2 p1, half2 p2, half2 p1_diff, half2 p2_diff, half2 v1, half2 v2, half2 rv1, half2 rv2){
-      float dist;
 
       half2 zero2 = __floats2half2_rn(0.f, 0.f);
 
@@ -172,19 +171,47 @@ __device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,in
       half2 htm2 = __hmul2(__hadd2(p2_diff,__hgt2(v2, zero2 )), rv2);
 
       // abs
-      float htm1_0 = fabs(__half2float(__low2half(htm1)));
-      float htm1_1 = fabs(__half2float(__high2half(htm1)));
-      float htm1_2 = fabs(__half2float(__low2half(htm2)));
-      dist=fminf(fminf(htm1_0, htm1_1),htm1_2);
-      (*id)=(dist==htm1_0?0:(dist==htm1_1?1:2));
+      *((int*)(&htm1)) &= 0x7FFF7FFF;
+      *((int*)(&htm2)) &= 0x7FFF7FFF;
+      half htm1_0 = __low2half(htm1);
+      half htm1_1 = __high2half(htm1);
+      half htm1_2 = __low2half(htm2);
+
+      int index = 0;
+      half min_dist = htm1_0;
+
+      if(__hlt(htm1_1, htm1_0)) {
+	  min_dist = htm1_1;
+	  index = 1;
+      }
+
+      if(__hlt(htm1_2, min_dist)) {
+	  min_dist = htm1_2;
+	  index = 2;
+      }
+
+      (*id) = index;
+      float dist = __half2float(min_dist);
+
+      //dist=fminf(fminf(htm1_0, htm1_1),htm1_2);
+      //(*id)=(dist==htm1_0?0:(dist==htm1_1?1:2));
 
       //p0 is inside, p is outside, move to the 1st intersection pt, now in the air side, to be corrected in the else block
       htime[0]=p0->x+dist*v->x;
       htime[1]=p0->y+dist*v->y;
       htime[2]=p0->z+dist*v->z;
+      
+      /*
+      half2 d2 = __halves2half2(min_dist, min_dist);
+      half2 htme1 = __hfma2(v1, d2, p1);
+      half2 htme2 = __hfma2(v2, d2, p2);
+      htime[0] = __half2float(__low2half(htme1));
+      htime[1] = __half2float(__high2half(htme1));
+      htime[2] = __half2float(__low2half(htme2));
+      */
 
-      int index = (*id & (int)3); 
 
+      //int index = (*id & (int)3); 
       if(index == 0) htime[0] = mcx_nextafterf(__float2int_rn(htime[0]), (v->x > 0.f)-(v->x < 0.f));
       if(index == 1) htime[1] = mcx_nextafterf(__float2int_rn(htime[1]), (v->y > 0.f)-(v->y < 0.f));
       if(index == 2) htime[2] = mcx_nextafterf(__float2int_rn(htime[2]), (v->z > 0.f)-(v->z < 0.f));
