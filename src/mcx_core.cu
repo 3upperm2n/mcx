@@ -174,6 +174,42 @@ __device__ inline half mcx_nextafter_half(half a, short dir){
       return __hsub(num.f,__float2half(1000.f));
 }
 
+
+__device__ inline half nextafter_half(half a, half dir){
+      union{
+          half f;
+	  //uint16 i;
+	  short i;
+      } from,to;
+
+	from.f = a;
+	to.f = dir;
+
+	short fabs = from.i & 0x7FFF; 
+        short tabs = to.i & 0x7FFF;
+
+	if(fabs > 0x7C00) {
+		return from.f;
+	}
+
+	if(tabs > 0x7C00 || from.i == to.i || !(fabs|tabs)) {
+		return to.f;
+	}
+
+	if(!fabs) {
+		to.i = (to.i&0x8000)+1;
+		return to.f;
+	}
+
+	bool lt = ((fabs==from.i) ? static_cast<int>(fabs) : -static_cast<int>(fabs)) < 
+		((tabs==to.i) ? static_cast<int>(tabs) : -static_cast<int>(tabs));
+
+	from.i = from.i + (((from.i>>15)^static_cast<unsigned>(lt))<<1) - 1;
+
+	return from.f; 
+}
+
+
 __device__ inline float hitgrid_half(float3 *p0, float3 *v, float *htime,float* rv,int *id){
 	float dist;
 
@@ -277,8 +313,15 @@ __device__ inline float hitgrid_half(float3 *p0, float3 *v, float *htime,float* 
 	if((*id) == 2) htime[2] = __half2float(mcx_nextafter_half(h2.h[0], pzw.s[0]));
 */
 	if((*id) == 0){
+/*
 		//htime[0] = __half2float(mcx_nextafter_half(h1.h[0], pxy.s[0]));
 		htime[0] = __half2float(mcx_nextafter_half(h1.h[0],  __half2short_rn(pxy.h[0])    ));
+		GPUDEBUG(("hitgrid => [id = 0] nextafter_half : %f %d\n", __half2float(h1.h[0]), __half2short_rn(pxy.h[0])));
+		GPUDEBUG(("hitgrid => [id = 0] nextafter_half : %f \n", htime[0]));
+		//float nxt = mcx_nextafterf(__half2float(h1.h[0]), __half2int_rn(pxy.h[0]) );
+		//GPUDEBUG(("hitgrid => [id = 0] nextafterf : %f \n", nxt));
+*/
+		htime[0] = __half2float(nextafter_half(h1.h[0],  pxy.h[0]));
 		GPUDEBUG(("hitgrid => [id = 0] nextafter_half : %f %d\n", __half2float(h1.h[0]), __half2short_rn(pxy.h[0])));
 		GPUDEBUG(("hitgrid => [id = 0] nextafter_half : %f \n", htime[0]));
 		//float nxt = mcx_nextafterf(__half2float(h1.h[0]), __half2int_rn(pxy.h[0]) );
@@ -286,15 +329,23 @@ __device__ inline float hitgrid_half(float3 *p0, float3 *v, float *htime,float* 
 	}
 
 	if((*id) == 1) {
+/*
 		htime[1] = __half2float(mcx_nextafter_half(h1.h[1],  __half2short_rn(pxy.h[1])    ));
+		GPUDEBUG(("hitgrid => [id = 1] nextafter_half : %f %d\n", __half2float(h1.h[1]), __half2short_rn(pxy.h[1])));
+		GPUDEBUG(("hitgrid => [id = 1] nextafter_half : %f \n", htime[1]));
+		//float nxt = mcx_nextafterf(__half2float(h1.h[1]), __half2int_rn(pxy.h[1]) );
+		//GPUDEBUG(("hitgrid => [id = 1] nextafterf : %f \n", nxt));
+*/
+		htime[1] = __half2float(nextafter_half(h1.h[1],  pxy.h[1]));
 		GPUDEBUG(("hitgrid => [id = 1] nextafter_half : %f %d\n", __half2float(h1.h[1]), __half2short_rn(pxy.h[1])));
 		GPUDEBUG(("hitgrid => [id = 1] nextafter_half : %f \n", htime[1]));
 		//float nxt = mcx_nextafterf(__half2float(h1.h[1]), __half2int_rn(pxy.h[1]) );
 		//GPUDEBUG(("hitgrid => [id = 1] nextafterf : %f \n", nxt));
 	}
 	if((*id) == 2) {
-		htime[2] = __half2float(mcx_nextafter_half(h2.h[0],  __half2short_rn(pzw.h[0])    ));
-		GPUDEBUG(("hitgrid => [id = 1] nextafter_half : %f %d\n", __half2float(h2.h[0]), __half2short_rn(pzw.h[0])));
+		//htime[2] = __half2float(mcx_nextafter_half(h2.h[0],  __half2short_rn(pzw.h[0])    ));
+		htime[2] = __half2float(nextafter_half(h2.h[0],  pzw.h[0]));
+		GPUDEBUG(("hitgrid => [id = 2] nextafter_half : %f %d\n", __half2float(h2.h[0]), __half2short_rn(pzw.h[0])));
 		GPUDEBUG(("hitgrid => [id = 2] nextafter_half : %f \n", htime[2]));
 		//float nxt = mcx_nextafterf(__half2float(h2.h[0]), __half2int_rn(pzw.h[0]) );
 		//GPUDEBUG(("hitgrid => [id = 2] nextafterf : %f \n", nxt));
