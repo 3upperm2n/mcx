@@ -55,6 +55,8 @@ else
   CUCCOPT=-lineinfo -Xcompiler -Wall#-g #-arch compute_20 #--maxrregcount 32
 endif
 
+#CUCCOPT+=-DMCX_DEBUG
+
 DLLFLAG=-fPIC
 OMP=-fopenmp
 CUDA_STATIC=--cudart static -Xcompiler "-static-libgcc -static-libstdc++"

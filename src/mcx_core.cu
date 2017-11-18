@@ -40,6 +40,8 @@
 
 #define CUDA_ASSERT(a)      mcx_cu_assess((a),__FILE__,__LINE__)
 
+#define HALF_MAX __half2float(__int2half_rn(65504))
+
 // optical properties saved in the constant memory
 // {x}:mua,{y}:mus,{z}:anisotropy (g),{w}:refractive index (n)
 __constant__ float4 gproperty[MAX_PROP];
@@ -162,9 +164,149 @@ __device__ inline float mcx_nextafterf(float a, int dir){
       return num.f-gcfg->maxvoidstep;
 }
 
+__device__ inline half mcx_nextafter_half(half a, short dir){
+      union{
+          half f;
+	  short i;
+      } num;
+      num.f=__hadd(a,__float2half(1000.f));
+      num.i+=dir ^ (num.i & 0x8000U);
+      return __hsub(num.f,__float2half(1000.f));
+}
+
+__device__ inline float hitgrid_half(float3 *p0, float3 *v, float *htime,float* rv,int *id){
+	float dist;
+
+	union {
+		unsigned int i;
+		float f;
+		half2 h2;
+		half h[2];
+		short s[2];
+	} pxy, pzw, vxy, vzw, h1,h2,temp;
+
+	//pxy.h2=__floats2half2_rn(floorf(p0->x) - p0->x +9.77e-04, floorf(p0->y) - p0->y +9.77e-04);
+	//pzw.h2=__floats2half2_rn(floorf(p0->z) - p0->z +9.77e-04,1e5f);
+
+	pxy.h2=__floats2half2_rn(floorf(p0->x) - p0->x, floorf(p0->y) - p0->y);
+	pzw.h2=__floats2half2_rn(floorf(p0->z) - p0->z,1e5f);
+
+	vxy.h2=__floats2half2_rn(rv[0],rv[1]);
+	vzw.h2=__floats2half2_rn(rv[2],1.f);
+
+
+	GPUDEBUG(("hitgrid => pxy :  %f %f \n",__half2float(pxy.h[0]),__half2float(pxy.h[1])));
+	GPUDEBUG(("hitgrid => pzw :  %f %f \n",__half2float(pzw.h[0]),__half2float(pzw.h[1])));
+	GPUDEBUG(("hitgrid => vxy (rv) :  %f %f \n",__half2float(vxy.h[0]),__half2float(vxy.h[1])));
+	GPUDEBUG(("hitgrid => vzw (rv) :  %f %f \n",__half2float(vzw.h[0]),__half2float(vzw.h[1])));
+
+
+	temp.h2 = __floats2half2_rn(0.f, 0.f);
+
+	h1.h2 = __hmul2(__hadd2(pxy.h2,__hgt2(vxy.h2, temp.h2 )), vxy.h2);
+	h2.h2 = __hmul2(__hadd2(pzw.h2,__hgt2(vzw.h2, temp.h2 )), vzw.h2);
+
+
+	GPUDEBUG(("hitgrid => h1  :  %f %f \n",__half2float(h1.h[0]),__half2float(h1.h[1])));
+	GPUDEBUG(("hitgrid => h2  :  %f %f \n",__half2float(h2.h[0]),__half2float(h2.h[1])));
+
+
+	// abs
+	h1.i &= 0x7FFF7FFF;
+	h2.i &= 0x7FFF7FFF;
+
+
+	GPUDEBUG(("hitgrid => h1 (abs) :  %f %f \n",__half2float(h1.h[0]),__half2float(h1.h[1])));
+	GPUDEBUG(("hitgrid => h2 (abs) :  %f %f \n",__half2float(h2.h[0]),__half2float(h2.h[1])));
+
+
+	// id
+	temp.i = 0;
+	vzw.h[0] = h1.h[0];   // use vzw.h[0] for min_dist
+
+	if(__hlt(h1.h[1], h1.h[0])) {
+		vzw.h[0] = h1.h[1];
+		temp.i = 1;
+	}
+
+	if(__hlt(h2.h[0], vzw.h[0])) {
+		vzw.h[0] = h2.h[0];
+		temp.i = 2;
+	}
+
+
+	dist = __half2float(vzw.h[0]); // convert min_dist to float
+	(*id) = temp.i;
+
+	GPUDEBUG(("hitgrid => dist:  %f \n", dist));
+	GPUDEBUG(("hitgrid => id:  %d \n", (*id)));
+
+
+	//p0 is inside, p is outside, move to the 1st intersection pt, now in the air side, to be corrected in the else block
+	vxy.h2=__floats2half2_rn(v->x,v->y);
+	vzw.h2=__floats2half2_rn(v->z,0.f);
+
+	GPUDEBUG(("hitgrid => v : %f %f %f\n", v->x, v->y, v->z));
+
+	pxy.h2=__floats2half2_rn(p0->x, p0->y);
+	pzw.h2=__floats2half2_rn(p0->z, 0.f);
+
+	GPUDEBUG(("hitgrid => p : %f %f %f\n", p0->x, p0->y, p0->z));
+
+	h1.h2 =__hfma2(vxy.h2,__floats2half2_rn(dist,dist),pxy.h2);
+	h2.h2 =__hfma2(vzw.h2,__floats2half2_rn(dist,dist),pzw.h2);
+	htime[0]=__half2float(h1.h[0]);
+	htime[1]=__half2float(h1.h[1]);
+	htime[2]=__half2float(h2.h[0]);
+
+	GPUDEBUG(("hitgrid => htime : %f %f %f\n", htime[0], htime[1], htime[2]));
+
+
+
+	temp.h2 = __floats2half2_rn(0.f, 0.f);
+	pxy.h2=__hsub2(__hgt2(vxy.h2, temp.h2 ), __hlt2(vxy.h2, temp.h2 ));
+	pzw.h2=__hsub2(__hgt2(vzw.h2, temp.h2 ), __hlt2(vzw.h2, temp.h2 ));
+
+	GPUDEBUG(("hitgrid => (v>0) - (v<0) : %f %f %f\n", __half2float(pxy.h[0]), 
+	__half2float(pxy.h[1]), __half2float(pzw.h[0])));
+
+
+/*
+	if((*id) == 0) htime[0] = __half2float(mcx_nextafter_half(h1.h[0], pxy.s[0]));
+	if((*id) == 1) htime[1] = __half2float(mcx_nextafter_half(h1.h[1], pxy.s[1]));
+	if((*id) == 2) htime[2] = __half2float(mcx_nextafter_half(h2.h[0], pzw.s[0]));
+*/
+	if((*id) == 0){
+		//htime[0] = __half2float(mcx_nextafter_half(h1.h[0], pxy.s[0]));
+		htime[0] = __half2float(mcx_nextafter_half(h1.h[0],  __half2short_rn(pxy.h[0])    ));
+		GPUDEBUG(("hitgrid => [id = 0] nextafter_half : %f %d\n", __half2float(h1.h[0]), __half2short_rn(pxy.h[0])));
+		GPUDEBUG(("hitgrid => [id = 0] nextafter_half : %f \n", htime[0]));
+		//float nxt = mcx_nextafterf(__half2float(h1.h[0]), __half2int_rn(pxy.h[0]) );
+		//GPUDEBUG(("hitgrid => [id = 0] nextafterf : %f \n", nxt));
+	}
+
+	if((*id) == 1) {
+		htime[1] = __half2float(mcx_nextafter_half(h1.h[1],  __half2short_rn(pxy.h[1])    ));
+		GPUDEBUG(("hitgrid => [id = 1] nextafter_half : %f %d\n", __half2float(h1.h[1]), __half2short_rn(pxy.h[1])));
+		GPUDEBUG(("hitgrid => [id = 1] nextafter_half : %f \n", htime[1]));
+		//float nxt = mcx_nextafterf(__half2float(h1.h[1]), __half2int_rn(pxy.h[1]) );
+		//GPUDEBUG(("hitgrid => [id = 1] nextafterf : %f \n", nxt));
+	}
+	if((*id) == 2) {
+		htime[2] = __half2float(mcx_nextafter_half(h2.h[0],  __half2short_rn(pzw.h[0])    ));
+		GPUDEBUG(("hitgrid => [id = 1] nextafter_half : %f %d\n", __half2float(h2.h[0]), __half2short_rn(pzw.h[0])));
+		GPUDEBUG(("hitgrid => [id = 2] nextafter_half : %f \n", htime[2]));
+		//float nxt = mcx_nextafterf(__half2float(h2.h[0]), __half2int_rn(pzw.h[0]) );
+		//GPUDEBUG(("hitgrid => [id = 2] nextafterf : %f \n", nxt));
+	}
+
+	return dist;
+}
+
+
+
 __device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,int *id,
 	half2 p1, half2 p2, half2 p1_diff, half2 p2_diff, half2 v1, half2 v2, half2 rv1, half2 rv2){
-      float dist;
 
       half2 zero2 = __floats2half2_rn(0.f, 0.f);
 
@@ -172,19 +314,47 @@ __device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,in
       half2 htm2 = __hmul2(__hadd2(p2_diff,__hgt2(v2, zero2 )), rv2);
 
       // abs
-      float htm1_0 = fabs(__half2float(__low2half(htm1)));
-      float htm1_1 = fabs(__half2float(__high2half(htm1)));
-      float htm1_2 = fabs(__half2float(__low2half(htm2)));
-      dist=fminf(fminf(htm1_0, htm1_1),htm1_2);
-      (*id)=(dist==htm1_0?0:(dist==htm1_1?1:2));
+      *((int*)(&htm1)) &= 0x7FFF7FFF;
+      *((int*)(&htm2)) &= 0x7FFF7FFF;
+      half htm1_0 = __low2half(htm1);
+      half htm1_1 = __high2half(htm1);
+      half htm1_2 = __low2half(htm2);
+
+      int index = 0;
+      half min_dist = htm1_0;
+
+      if(__hlt(htm1_1, htm1_0)) {
+	  min_dist = htm1_1;
+	  index = 1;
+      }
+
+      if(__hlt(htm1_2, min_dist)) {
+	  min_dist = htm1_2;
+	  index = 2;
+      }
+
+      (*id) = index;
+      float dist = __half2float(min_dist);
+
+      //dist=fminf(fminf(htm1_0, htm1_1),htm1_2);
+      //(*id)=(dist==htm1_0?0:(dist==htm1_1?1:2));
 
       //p0 is inside, p is outside, move to the 1st intersection pt, now in the air side, to be corrected in the else block
       htime[0]=p0->x+dist*v->x;
       htime[1]=p0->y+dist*v->y;
       htime[2]=p0->z+dist*v->z;
+      
+      /*
+      half2 d2 = __halves2half2(min_dist, min_dist);
+      half2 htme1 = __hfma2(v1, d2, p1);
+      half2 htme2 = __hfma2(v2, d2, p2);
+      htime[0] = __half2float(__low2half(htme1));
+      htime[1] = __half2float(__high2half(htme1));
+      htime[2] = __half2float(__low2half(htme2));
+      */
 
-      int index = (*id & (int)3); 
 
+      //int index = (*id & (int)3); 
       if(index == 0) htime[0] = mcx_nextafterf(__float2int_rn(htime[0]), (v->x > 0.f)-(v->x < 0.f));
       if(index == 1) htime[1] = mcx_nextafterf(__float2int_rn(htime[1]), (v->y > 0.f)-(v->y < 0.f));
       if(index == 2) htime[2] = mcx_nextafterf(__float2int_rn(htime[2]), (v->z > 0.f)-(v->z < 0.f));
@@ -246,6 +416,8 @@ __device__ inline int skipvoid(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,uchar m
 		count=0;
 		while(!(p->x>=0.f && p->y>=0.f && p->z>=0.f && p->x < gcfg->maxidx.x
                   && p->y < gcfg->maxidx.y && p->z < gcfg->maxidx.z) || !(media[idx1d] & MED_MASK)){ // at most 3 times
+
+/*
 		    // leiming
 		    half2 p1_diff = __floats2half2_rn(floorf(p->x) - p->x, floorf(p->y) - p->y); 
 		    half2 p2_diff = __floats2half2_rn(floorf(p->z) - p->z , 0.f); 
@@ -261,9 +433,10 @@ __device__ inline int skipvoid(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,uchar m
 
 		    half2 rv1 = __floats2half2_rn(rv->x, rv->y); 
 		    half2 rv2 = __floats2half2_rn(rv->z, 0.f); 
+*/
 
-	            f->t+=gcfg->minaccumtime*hitgrid((float3*)p,(float3*)v,&htime.x,&rv->x,&flipdir, 
-			    p1,p2,p1_diff,p2_diff,v1,v2,rv1,rv2);
+	            f->t+=gcfg->minaccumtime*hitgrid_half((float3*)p,(float3*)v,&htime.x,&rv->x,&flipdir); 
+//			    p1,p2,p1_diff,p2_diff,v1,v2,rv1,rv2);
 
                     *((float4*)(p))=float4(htime.x,htime.y,htime.z,p->w);
                     idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
@@ -700,7 +873,8 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
 #ifdef USE_ATOMIC
                             }else{
                                 atomicadd(& field[idx1d+tshift*gcfg->dimlen.z], replayweight[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)]);
-                                GPUDEBUG(("atomic write to [%d] %e, w=%f\n",idx1d,weight,p.w));
+                                //GPUDEBUG(("atomic write to [%d] %e, w=%f\n",idx1d,weight,p.w));
+                                GPUDEBUG(("atomic write to [%d] w=%f\n",idx1d,p.w));
                             }
 #endif
                        }
@@ -713,6 +887,7 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
 	  *((float4*)(&prop))=gproperty[mediaid & MED_MASK];
 	  
 	  // leiming
+/*
 	  half2 p1_diff = __floats2half2_rn(floorf(p.x) - p.x, floorf(p.y) - p.y); 
 	  half2 p2_diff = __floats2half2_rn(floorf(p.z) - p.z , 0.f); 
 
@@ -727,9 +902,10 @@ kernel void mcx_main_loop(uchar media[],float field[],float genergy[],uint n_see
 
 	  half2 rv1 = __floats2half2_rn(rv.x, rv.y); 
 	  half2 rv2 = __floats2half2_rn(rv.z, 0.f); 
+*/
 
-	  len=(gcfg->faststep) ? gcfg->minstep : hitgrid((float3*)&p,(float3*)v,&(htime.x),&rv.x,&flipdir, 
-		  p1, p2, p1_diff, p2_diff, v1, v2, rv1, rv2); // propagate the photon to the first intersection to the grid
+	  len=(gcfg->faststep) ? gcfg->minstep : hitgrid_half((float3*)&p,(float3*)v,&(htime.x),&rv.x,&flipdir);
+		  //p1, p2, p1_diff, p2_diff, v1, v2, rv1, rv2); // propagate the photon to the first intersection to the grid
 
 
 
