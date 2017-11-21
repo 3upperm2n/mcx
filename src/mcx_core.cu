@@ -166,8 +166,8 @@ __device__ inline float mcx_nextafterf(float a, int dir){
 }
 
 __device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,int8_t *id){
-      float dist, xi[3];
-	  half hdist;
+      float dist;
+	  //half hdist;
 
       /*
       htime[0]=fabs(__half2float(__hmul(__hsub(__hadd(__float2half(floorf(p0->x)),
@@ -187,13 +187,12 @@ __device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,in
       */
 
 
-	  /*
       ////time-of-flight to hit the wall in each direction
       htime[0]=fabs((floorf(p0->x)+(v->x>0.f)-p0->x)*rv[0]); // absolute distance of travel in x/y/z
       htime[1]=fabs((floorf(p0->y)+(v->y>0.f)-p0->y)*rv[1]);
       htime[2]=fabs((floorf(p0->z)+(v->z>0.f)-p0->z)*rv[2]);
-	  */
 
+      /*
 	  half ht[3];
 	  half flr_p[3]={__float2half(floorf(p0->x)),__float2half(floorf(p0->y)),__float2half(floorf(p0->z))};
 	  half vv[3]={__float2half((v->x>0.f)),__float2half((v->y>0.f)),__float2half((v->z>0.f))};
@@ -208,23 +207,25 @@ __device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,in
 	  hdist = (__hlt(hdist, ht[2]))? hdist : ht[2];
 
 	  dist = __half2float(hdist);
+	  */
 
       //get the direction with the smallest time-of-flight
-      //dist=fminf(fminf(htime[0],htime[1]),htime[2]);
-      (*id)=(__heq(hdist,ht[0])?0:(__heq(hdist,ht[1])?1:2));
+      dist=fminf(fminf(htime[0],htime[1]),htime[2]);
+
+      //(*id)=(__heq(hdist,ht[0])?0:(__heq(hdist,ht[1])?1:2));
+      (*id)=(dist==htime[0]?0:(dist==htime[1]?1:2));
+      
 
       //p0 is inside, p is outside, move to the 1st intersection pt, now in the air side, to be corrected in the else block
       htime[0]=p0->x+dist*v->x;
       htime[1]=p0->y+dist*v->y;
       htime[2]=p0->z+dist*v->z;
 
-      xi[0] = mcx_nextafterf(__float2int_rn(htime[0]), (v->x > 0.f)-(v->x < 0.f));
-      xi[1] = mcx_nextafterf(__float2int_rn(htime[1]), (v->y > 0.f)-(v->y < 0.f));
-      xi[2] = mcx_nextafterf(__float2int_rn(htime[2]), (v->z > 0.f)-(v->z < 0.f));
+      int index = (*id & (int)3); 
 
-      if (*id == 0) htime[0] = xi[0];
-      if (*id == 1) htime[1] = xi[1];
-      if (*id == 2) htime[2] = xi[2];
+      if(index == 0) htime[0] = mcx_nextafterf(__float2int_rn(htime[0]), (v->x > 0.f)-(v->x < 0.f));
+      if(index == 1) htime[1] = mcx_nextafterf(__float2int_rn(htime[1]), (v->y > 0.f)-(v->y < 0.f));
+      if(index == 2) htime[2] = mcx_nextafterf(__float2int_rn(htime[2]), (v->z > 0.f)-(v->z < 0.f));
 
       return dist;
 }
