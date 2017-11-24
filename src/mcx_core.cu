@@ -30,7 +30,27 @@
 #include "mcx_const.h"
 
 #ifdef USE_HALF
-    #include "cuda_fp16.h"
+    #include <cuda_fp16.h>
+    #include "fp16_conversion.h"   // host function for half conversion
+    #define f2h(x) __float2half(x)
+    #define h2f(x) __half2float(x)
+    #define hneg(x) __hneg(x)
+    #define hne(x,y) __hne(x,y)
+    #define hge(x,y) __hge(x,y)
+    #define hgt(x,y) __hgt(x,y)
+    #define hlt(x,y) __hlt(x,y)
+    #define hle(x,y) __hle(x,y)
+    #define hmul(x,y) __hmul(x,y)
+    #define hsub(x,y) __hsub(x,y)
+    #define hadd(x,y) __hadd(x,y)
+    #define int2half(x) __int2half_rn(x)
+    #define half2int(x) __half2int_rn(x)
+
+
+    #define FP16EPS f2h(0.00097656)
+    #define HALFONE f2h(1.f)
+    #define HALFZERO f2h(0.f)
+    #define HALFONENEG f2h(-1.f)
 #endif
 
 #if defined(USE_XORSHIFT128P_RAND)
@@ -120,6 +140,7 @@ __device__ inline uint finddetector(MCXpos *p0,uint id){
       return 0;
 }
 
+#ifndef USE_HALF
 __device__ inline void savedetphoton(uint detid,float n_det[],uint *detectedphoton,float nscat,float *ppath,MCXpos *p0,MCXdir *v,RandType t[RAND_BUF_LEN],RandType *seeddata){
       detid=finddetector(p0,detid-1);
       if(detid){
@@ -142,6 +163,34 @@ __device__ inline void savedetphoton(uint detid,float n_det[],uint *detectedphot
 	 }
       }
 }
+#else
+/*
+ * fp 16
+ */
+__device__ inline void savedetphoton(uint detid,float n_det[],uint *detectedphoton, half nscat,float *ppath,MCXpos *p0,MCXdir *v,RandType t[RAND_BUF_LEN],RandType *seeddata){
+      detid=finddetector(p0,detid-1);
+      if(detid){
+	 uint baseaddr=atomicAdd(detectedphoton,1);
+	 if(baseaddr<gcfg->maxdetphoton){
+	    uint i;
+	    for(i=0;i<gcfg->issaveseed*RAND_BUF_LEN;i++)
+	        seeddata[baseaddr*RAND_BUF_LEN+i]=t[i]; // save photon seed for replay
+	    baseaddr*=gcfg->maxmedia+2+gcfg->issaveexit*6;
+	    n_det[baseaddr++]=detid;
+	    n_det[baseaddr++]=h2f(nscat);
+	    for(i=0;i<gcfg->maxmedia;i++)
+		n_det[baseaddr+i]=ppath[i]; // save partial pathlength to the memory
+	    if(gcfg->issaveexit){
+                baseaddr+=gcfg->maxmedia;
+	        *((float3*)(n_det+baseaddr))=float3(p0->x,p0->y,p0->z);
+		baseaddr+=3;
+		*((float3*)(n_det+baseaddr))=float3(h2f(v->x),h2f(v->y),h2f(v->z));
+	    }
+	 }
+      }
+}
+#endif
+
 #endif
 __device__ inline void savedebugdata(MCXpos *p,uint id,float *gdebugdata){
       uint pos=atomicAdd(gjumpdebug,1);
@@ -266,6 +315,7 @@ __device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,in
 
 #endif
 
+#ifndef USE_HALF
 __device__ inline void transmit(MCXdir *v, float n1, float n2,int flipdir){
       float tmp0=n1/n2;
       v->x*=tmp0;
@@ -277,7 +327,28 @@ __device__ inline void transmit(MCXdir *v, float n1, float n2,int flipdir){
 	      (v->y=sqrtf(1.f - v->x*v->x - v->z*v->z)*((v->y>0.f)-(v->y<0.f))):
 	      (v->z=sqrtf(1.f - v->x*v->x - v->y*v->y)*((v->z>0.f)-(v->z<0.f))));
 }
+#else
+__device__ inline void transmit(MCXdir *v, float n1, float n2,int flipdir){
+      half tmp0=f2h(n1/n2);
+      v->x=hmul(v->x, tmp0);
+      v->y=hmul(v->y, tmp0);
+      v->z=hmul(v->z, tmp0);
 
+      if(flipdir == 0) {
+	  v->x = hmul(hsqrt(hsub(hsub(HALFONE, hmul(v->y, v->y)), hmul(v->z, v->z))), 
+	      hsub( hgt(v->x, HALFZERO) ?  HALFONE : HALFZERO, hlt(v->x, HALFZERO) ? HALFONE : HALFZERO));
+      } else if(flipdir == 1) {
+	  v->y = hmul(hsqrt(hsub(hsub(HALFONE, hmul(v->x, v->x)), hmul(v->z, v->z))), 
+	      hsub(hgt(v->y, HALFZERO) ? HALFONE : HALFZERO, hlt(v->y, HALFZERO) ? HALFONE : HALFZERO));
+      } else {
+	  v->z = hmul(hsqrt(hsub(hsub(HALFONE, hmul(v->x, v->x)), hmul(v->y, v->y))), 
+	      hsub(hgt(v->z, HALFZERO) ? HALFONE : HALFZERO, hlt(v->z, HALFZERO) ? HALFONE : HALFZERO));
+      }
+}
+#endif
+
+
+#ifndef USE_HALF
 __device__ inline float reflectcoeff(MCXdir *v, float n1, float n2, int flipdir){
       float Icos=fabs((flipdir==0) ? v->x : (flipdir==1 ? v->y : v->z));
       float tmp0=n1*n1;
@@ -296,10 +367,36 @@ __device__ inline float reflectcoeff(MCXdir *v, float n1, float n2, int flipdir)
           return 1.f;
       }
 }
+#else
+/* 
+ * fp16
+ */
+__device__ inline float reflectcoeff(MCXdir *v, float n1, float n2, int flipdir){
+      float Icos=fabs((flipdir==0) ? h2f(v->x) : (flipdir==1 ? h2f(v->y) : h2f(v->z)));
+      float tmp0=n1*n1;
+      float tmp1=n2*n2;
+      float tmp2=1.f-tmp0/tmp1*(1.f-Icos*Icos); /*1-[n1/n2*sin(si)]^2 = cos(ti)^2*/
+      if(tmp2>0.f){ // partial reflection
+          float Re,Im,Rtotal;
+	  Re=tmp0*Icos*Icos+tmp1*tmp2;
+	  tmp2=sqrtf(tmp2); /*to save one sqrt*/
+	  Im=2.f*n1*n2*Icos*tmp2;
+	  Rtotal=(Re-Im)/(Re+Im);     /*Rp*/
+	  Re=tmp1*Icos*Icos+tmp0*tmp2*tmp2;
+	  Rtotal=(Rtotal+(Re-Im)/(Re+Im))*0.5f; /*(Rp+Rs)/2*/
+	  return Rtotal;
+      }else{ // total reflection
+          return 1.f;
+      }
+}
+
+
+#endif
 
 /* if the source location is outside of the volume or 
 in an void voxel, mcx advances the photon in v.{xyz} direction
 until it hits an non-zero voxel */
+#ifndef USE_HALF
 __device__ inline int skipvoid(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,uint media[]){
       int count=1,idx1d;
       while(1){
@@ -354,7 +451,77 @@ __device__ inline int skipvoid(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,uint me
 	      return -1;
       }
 }
+#else
+__device__ inline int skipvoid(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,uint media[]){
+      int count=1,idx1d;
+      while(1){
+          if(p->x>=0.f && p->y>=0.f && p->z>=0.f && p->x < gcfg->maxidx.x
+               && p->y < gcfg->maxidx.y && p->z < gcfg->maxidx.z){
+	    idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
+	    if(media[idx1d] & MED_MASK){ // if inside
+                //GPUDEBUG(("inside volume [%f %f %f] v=<%f %f %f>\n",p->x,p->y,p->z,v->x,v->y,v->z));
+	        float3 htime;
+                int flipdir;
 
+                p->x-=h2f(v->x);
+                p->y-=h2f(v->y);
+                p->z-=h2f(v->z);
+
+                f->t-=gcfg->minaccumtime;
+                idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
+
+                GPUDEBUG(("look for entry p0=[%f %f %f] rv=[%f %f %f]\n",p->x,p->y,p->z,rv->x,rv->y,rv->z));
+		count=0;
+		while(!(p->x>=0.f && p->y>=0.f && p->z>=0.f && p->x < gcfg->maxidx.x
+                  && p->y < gcfg->maxidx.y && p->z < gcfg->maxidx.z) || !(media[idx1d] & MED_MASK)){ // at most 3 times
+	            f->t+=gcfg->minaccumtime*hitgrid((float3*)p,(float3*)v,&htime.x,&rv->x,&flipdir);
+                    *((float4*)(p))=float4(htime.x,htime.y,htime.z,p->w);
+                    idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
+                    GPUDEBUG(("entry p=[%f %f %f] flipdir=%d\n",p->x,p->y,p->z,flipdir));
+
+		    if(count++>3){
+		       GPUDEBUG(("fail to find entry point after 3 iterations, something is wrong, abort!!"));
+		       break;
+		    }
+		}
+                f->t= (gcfg->voidtime) ? f->t : 0.f;
+
+		if(gproperty[media[idx1d] & MED_MASK].w!=gproperty[0].w){
+	            p->w*=1.f-reflectcoeff(v, gproperty[0].w,gproperty[media[idx1d] & MED_MASK].w,flipdir);
+                    GPUDEBUG(("transmitted intensity w=%e\n",p->w));
+	            if(p->w>EPS){
+		        transmit(v, gproperty[0].w,gproperty[media[idx1d] & MED_MASK].w,flipdir);
+                        //GPUDEBUG(("transmit into volume v=<%f %f %f>\n",v->x,v->y,v->z));
+                    }
+		}
+		return idx1d;
+	    }
+          }
+	  /*
+	  if( (p->x<0.f) && (v->x<=0.f) || (p->x >= gcfg->maxidx.x) && (v->x>=0.f)
+	   || (p->y<0.f) && (v->y<=0.f) || (p->y >= gcfg->maxidx.y) && (v->y>=0.f)
+	   || (p->z<0.f) && (v->z<=0.f) || (p->z >= gcfg->maxidx.z) && (v->z>=0.f))
+	      return -1;
+	  */
+	  if( (p->x<0.f) && hle(v->x,HALFZERO) || (p->x >= gcfg->maxidx.x) && hle(v->x, HALFZERO)
+	   || (p->y<0.f) && hle(v->y,HALFZERO) || (p->y >= gcfg->maxidx.y) && hle(v->y, HALFZERO)
+	   || (p->z<0.f) && hle(v->z,HALFZERO) || (p->z >= gcfg->maxidx.z) && hle(v->z, HALFZERO))
+	      return -1;
+
+	  //*((float4*)(p))=float4(p->x+v->x,p->y+v->y,p->z+v->z,p->w);
+	  *((float4*)(p))=float4(p->x+h2f(v->x),p->y+h2f(v->y),p->z+h2f(v->z),p->w);
+
+          GPUDEBUG(("inside void [%f %f %f]\n",p->x,p->y,p->z));
+
+          f->t+=gcfg->minaccumtime;
+	  if(count++>gcfg->maxvoidstep)
+	      return -1;
+      }
+}
+
+#endif
+
+#ifndef USE_HALF
 __device__ inline void rotatevector2d(MCXdir *v, float stheta, float ctheta){
       if(gcfg->is2d==1)
    	  *((float4*)v)=float4(
@@ -379,7 +546,33 @@ __device__ inline void rotatevector2d(MCXdir *v, float stheta, float ctheta){
    	  );
       GPUDEBUG(("new dir: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
 }
+#else
+__device__ inline void rotatevector2d(MCXdir *v, float stheta, float ctheta){
+      half sta = f2h(stheta);
+      half cta = f2h(ctheta);
+      half vv[4] = {v->x, v->y, v->z, v->nscat};
 
+      if(gcfg->is2d==1) {
+	  v->x = HALFZERO;
+          v->y = hsub(hmul(vv[1], cta), hmul(vv[2], sta));
+          v->z = hadd(hmul(vv[1], sta), hmul(vv[2], cta));
+      } else if(gcfg->is2d==2) {
+          v->x = hsub(hmul(vv[0], cta), hmul(vv[2], sta));
+	  v->y = HALFZERO;
+          v->z = hadd(hmul(vv[0], sta), hmul(vv[2], cta));
+      } else if(gcfg->is2d==3) {
+          v->x = hsub(hmul(vv[0], cta), hmul(vv[1], sta));
+          v->y = hadd(hmul(vv[0], sta), hmul(vv[1], cta));
+	  v->z = HALFZERO;
+      }
+      //GPUDEBUG(("new dir: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
+}
+#endif
+
+
+
+
+#ifndef USE_HALF
 __device__ inline void rotatevector(MCXdir *v, float stheta, float ctheta, float sphi, float cphi){
       if( v->z>-1.f+EPS && v->z<1.f-EPS ) {
    	  float tmp0=1.f-v->z*v->z;
@@ -395,6 +588,41 @@ __device__ inline void rotatevector(MCXdir *v, float stheta, float ctheta, float
       }
       GPUDEBUG(("new dir: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
 }
+#else
+__device__ inline void rotatevector(MCXdir *v, float stheta, float ctheta, float sphi, float cphi){
+
+      //if( v->z>-1.f+EPS && v->z<1.f-EPS ) {
+      if(hgt(v->z, hsub(FP16EPS,HALFONE)) && hlt(v->z, hsub(HALFONE, FP16EPS))) {
+   	  //float tmp0=1.f-v->z*v->z;
+   	  float tmp0=1.f - h2f(hmul(v->z,v->z));
+   	  float tmp1=stheta*rsqrtf(tmp0);
+	  /*
+   	  *((float4*)v)=float4(
+   	       tmp1*(v->x*v->z*cphi - v->y*sphi) + v->x*ctheta,
+   	       tmp1*(v->y*v->z*cphi + v->x*sphi) + v->y*ctheta,
+   	      -tmp1*tmp0*cphi                    + v->z*ctheta,
+   	       v->nscat
+   	  );
+	  */
+   	  *((float4*)v)=float4(
+   	       tmp1*(h2f(hmul(v->x,v->z))*cphi - h2f(v->y)*sphi) + h2f(v->x)*ctheta,
+   	       tmp1*(h2f(hmul(v->y,v->z))*cphi + h2f(v->x)*sphi) + h2f(v->y)*ctheta,
+   	      -tmp1*tmp0*cphi                    + h2f(v->z)*ctheta,
+   	       h2f(v->nscat)
+   	  );
+      }else{
+   	  //*((float4*)v)=float4(stheta*cphi,stheta*sphi,(v->z>0.f)?ctheta:-ctheta,v->nscat);
+	  (*v).x = f2h(stheta*cphi);
+	  (*v).y = f2h(stheta*sphi);
+	  (*v).z = hgt(v->z, HALFZERO) ?  f2h(ctheta) :  hneg(f2h(ctheta));
+      }
+      //GPUDEBUG(("new dir: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
+}
+#endif
+
+
+
+#ifndef USE_HALF
 
 template <int mcxsource>
 __device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,Medium *prop,uint *idx1d,
@@ -637,6 +865,283 @@ __device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,
       return 0;
 }
 
+#else
+/*
+ * fp16 implementation
+ */
+template <int mcxsource>
+__device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,Medium *prop,uint *idx1d,
+           uint *mediaid,float *w0,float *Lmove,uint isdet, float ppath[],float energyloss[],float energylaunched[],float n_det[],uint *dpnum,
+	   RandType t[RAND_BUF_LEN],RandType photonseed[RAND_BUF_LEN],
+	   uint media[],float srcpattern[],int threadid,RandType rngseed[],RandType seeddata[],float gdebugdata[],volatile int gprogress[]){
+      *w0=1.f;     // reuse to count for launchattempt
+      *Lmove=-1.f; // reuse as "canfocus" flag for each source: non-zero: focusable, zero: not focusable
+      *rv=float3(gcfg->ps.x,gcfg->ps.y,gcfg->ps.z); // reuse as the origin of the src, needed for focusable sources
+
+      if(p->w>=0.f){
+          *energyloss+=p->w;  // sum all the remaining energy
+#ifdef SAVE_DETECTORS
+      // let's handle detectors here
+          if(gcfg->savedet){
+             if(isdet && *mediaid==0)
+	         savedetphoton((isdet>>16),n_det,dpnum,v->nscat,ppath,p,v,photonseed,seeddata);
+             clearpath(ppath,gcfg->maxmedia);
+          }
+#endif
+      }
+
+      if((int)(f->ndone)>=(gcfg->threadphoton+(threadid<gcfg->oddphotons))-1){
+          return 1; // all photos complete
+      }
+      if(gcfg->seed==SEED_FROM_FILE){
+          int seedoffset=(threadid*gcfg->threadphoton+min(threadid,gcfg->oddphotons-1)+max(0,(int)f->ndone+1))*RAND_BUF_LEN;
+          for(int i=0;i<RAND_BUF_LEN;i++)
+	      t[i]=rngseed[seedoffset+i];
+      }
+      do{
+	  *((float4*)p)=gcfg->ps;
+	  //*((float4*)v)=gcfg->c0;
+	  (*v).x = f2h(gcfg->c0.x);
+	  (*v).y = f2h(gcfg->c0.y);
+	  (*v).z = f2h(gcfg->c0.z);
+	  (*v).nscat = f2h(gcfg->c0.w);
+
+	  *((float4*)f)=float4(0.f,0.f,gcfg->minaccumtime,f->ndone);
+          *idx1d=gcfg->idx1dorig;
+          *mediaid=gcfg->mediaidorig;
+	  if(gcfg->issaveseed)
+              copystate(t,photonseed);
+
+	  switch(mcxsource) {
+		case(MCX_SRC_PLANAR):
+		case(MCX_SRC_PATTERN):
+		case(MCX_SRC_FOURIER):
+		case(MCX_SRC_PENCILARRAY): { /*a rectangular grid over a plane*/
+		      float rx=rand_uniform01(t);
+		      float ry=rand_uniform01(t);
+		      *((float4*)p)=float4(p->x+rx*gcfg->srcparam1.x+ry*gcfg->srcparam2.x,
+					   p->y+rx*gcfg->srcparam1.y+ry*gcfg->srcparam2.y,
+					   p->z+rx*gcfg->srcparam1.z+ry*gcfg->srcparam2.z,
+					   p->w);
+		      if(gcfg->srctype==MCX_SRC_PATTERN) // need to prevent rx/ry=1 here
+			  p->w=srcpattern[(int)(ry*JUST_BELOW_ONE*gcfg->srcparam2.w)*(int)(gcfg->srcparam1.w)+(int)(rx*JUST_BELOW_ONE*gcfg->srcparam1.w)];
+		      else if(gcfg->srctype==MCX_SRC_FOURIER)
+			  p->w=(cosf((floorf(gcfg->srcparam1.w)*rx+floorf(gcfg->srcparam2.w)*ry
+				  +gcfg->srcparam1.w-floorf(gcfg->srcparam1.w))*TWO_PI)*(1.f-gcfg->srcparam2.w+floorf(gcfg->srcparam2.w))+1.f)*0.5f; //between 0 and 1
+		      else if(gcfg->srctype==MCX_SRC_PENCILARRAY){
+			  p->x=gcfg->ps.x+ floorf(rx*gcfg->srcparam1.w)*gcfg->srcparam1.x/(gcfg->srcparam1.w-1.f)+floorf(ry*gcfg->srcparam2.w)*gcfg->srcparam2.x/(gcfg->srcparam2.w-1.f);
+			  p->y=gcfg->ps.y+ floorf(rx*gcfg->srcparam1.w)*gcfg->srcparam1.y/(gcfg->srcparam1.w-1.f)+floorf(ry*gcfg->srcparam2.w)*gcfg->srcparam2.y/(gcfg->srcparam2.w-1.f);
+			  p->z=gcfg->ps.z+ floorf(rx*gcfg->srcparam1.w)*gcfg->srcparam1.z/(gcfg->srcparam1.w-1.f)+floorf(ry*gcfg->srcparam2.w)*gcfg->srcparam2.z/(gcfg->srcparam2.w-1.f);
+		      }
+		      *idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
+		      if(p->x<0.f || p->y<0.f || p->z<0.f || p->x>=gcfg->maxidx.x || p->y>=gcfg->maxidx.y || p->z>=gcfg->maxidx.z){
+			  *mediaid=0;
+		      }else{
+			  *mediaid=media[*idx1d];
+		      }
+                      *rv=float3(rv->x+(gcfg->srcparam1.x+gcfg->srcparam2.x)*0.5f,
+		                 rv->y+(gcfg->srcparam1.y+gcfg->srcparam2.y)*0.5f,
+				 rv->z+(gcfg->srcparam1.z+gcfg->srcparam2.z)*0.5f);
+		      break;
+		}
+		case(MCX_SRC_FOURIERX):
+		case(MCX_SRC_FOURIERX2D): { // [v1x][v1y][v1z][|v2|]; [kx][ky][phi0][M], unit(v0) x unit(v1)=unit(v2)
+		      float rx=rand_uniform01(t);
+		      float ry=rand_uniform01(t);
+		      float4 v2=gcfg->srcparam1;
+		      // calculate v2 based on v2=|v2| * unit(v0) x unit(v1)
+		      v2.w*=rsqrt(gcfg->srcparam1.x*gcfg->srcparam1.x+gcfg->srcparam1.y*gcfg->srcparam1.y+gcfg->srcparam1.z*gcfg->srcparam1.z);
+		      v2.x=v2.w*(gcfg->c0.y*gcfg->srcparam1.z - gcfg->c0.z*gcfg->srcparam1.y);
+		      v2.y=v2.w*(gcfg->c0.z*gcfg->srcparam1.x - gcfg->c0.x*gcfg->srcparam1.z); 
+		      v2.z=v2.w*(gcfg->c0.x*gcfg->srcparam1.y - gcfg->c0.y*gcfg->srcparam1.x);
+		      *((float4*)p)=float4(p->x+rx*gcfg->srcparam1.x+ry*v2.x,
+					   p->y+rx*gcfg->srcparam1.y+ry*v2.y,
+					   p->z+rx*gcfg->srcparam1.z+ry*v2.z,
+					   p->w);
+		      if(gcfg->srctype==MCX_SRC_FOURIERX2D)
+			 p->w=(sinf((gcfg->srcparam2.x*rx+gcfg->srcparam2.z)*TWO_PI)*sinf((gcfg->srcparam2.y*ry+gcfg->srcparam2.w)*TWO_PI)+1.f)*0.5f; //between 0 and 1
+		      else
+			 p->w=(cosf((gcfg->srcparam2.x*rx+gcfg->srcparam2.y*ry+gcfg->srcparam2.z)*TWO_PI)*(1.f-gcfg->srcparam2.w)+1.f)*0.5f; //between 0 and 1
+   
+		      *idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
+		      if(p->x<0.f || p->y<0.f || p->z<0.f || p->x>=gcfg->maxidx.x || p->y>=gcfg->maxidx.y || p->z>=gcfg->maxidx.z){
+			  *mediaid=0;
+		      }else{
+			  *mediaid=media[*idx1d];
+		      }
+                      *rv=float3(rv->x+(gcfg->srcparam1.x+v2.x)*0.5f,
+		                 rv->y+(gcfg->srcparam1.y+v2.y)*0.5f,
+				 rv->z+(gcfg->srcparam1.z+v2.z)*0.5f);
+		      break;
+		}
+		case(MCX_SRC_DISK):
+		case(MCX_SRC_GAUSSIAN): { // uniform disk distribution or Gaussian-beam
+		      // Uniform disk point picking
+		      // http://mathworld.wolfram.com/DiskPointPicking.html
+		      float sphi, cphi;
+		      float phi=TWO_PI*rand_uniform01(t);
+		      sincosf(phi,&sphi,&cphi);
+		      float r;
+		      if(gcfg->srctype==MCX_SRC_DISK)
+			  r=sqrtf(rand_uniform01(t))*gcfg->srcparam1.x;
+		      else if(fabs(gcfg->c0.w) < 1e-5f || fabs(gcfg->srcparam1.y) < 1e-5f)
+		          r=sqrtf(-0.5f*logf(rand_uniform01(t)))*gcfg->srcparam1.x;
+		      else{
+		          r=gcfg->srcparam1.x*gcfg->srcparam1.x*M_PI/gcfg->srcparam1.y; //Rayleigh range
+		          r=sqrtf(-0.5f*logf(rand_uniform01(t))*(1.f+(gcfg->c0.w*gcfg->c0.w/(r*r))))*gcfg->srcparam1.x;
+                      }
+                      if(hgt(v->z, hsub(FP16EPS,HALFONE)) && hlt(v->z, hsub(HALFONE, FP16EPS))) {
+			  //float tmp0=1.f-v->z*v->z;
+			  float tmp0=1.f - h2f(hmul(v->z,v->z));
+			  float tmp1=r*rsqrtf(tmp0);
+			  /*
+			  *((float4*)p)=float4(
+			       p->x+tmp1*(v->x*v->z*cphi - v->y*sphi),
+			       p->y+tmp1*(v->y*v->z*cphi + v->x*sphi),
+			       p->z-tmp1*tmp0*cphi                   ,
+			       p->w
+			  );
+			  */
+			  *((float4*)p)=float4(
+			       p->x+tmp1*(h2f(hmul(v->x,v->z))*cphi - h2f(v->y)*sphi),
+			       p->y+tmp1*(h2f(hmul(v->y,v->z))*cphi + h2f(v->x)*sphi),
+			       p->z-tmp1*tmp0*cphi                   ,
+			       p->w
+			  );
+			  //GPUDEBUG(("new dir: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
+		      }else{
+			  p->x+=r*cphi;
+			  p->y+=r*sphi;
+			  //GPUDEBUG(("new dir-z: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
+		      }
+		      *idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
+		      if(p->x<0.f || p->y<0.f || p->z<0.f || p->x>=gcfg->maxidx.x || p->y>=gcfg->maxidx.y || p->z>=gcfg->maxidx.z){
+			  *mediaid=0;
+		      }else{
+			  *mediaid=media[*idx1d];
+		      }
+		      break;
+		  }
+		case(MCX_SRC_CONE):
+		case(MCX_SRC_ISOTROPIC):
+		case(MCX_SRC_ARCSINE): {
+		      // Uniform point picking on a sphere 
+		      // http://mathworld.wolfram.com/SpherePointPicking.html
+		      float ang,stheta,ctheta,sphi,cphi;
+		      ang=TWO_PI*rand_uniform01(t); //next arimuth angle
+		      sincosf(ang,&sphi,&cphi);
+		      if(gcfg->srctype==MCX_SRC_CONE){  // a solid-angle section of a uniform sphere
+			  do{
+			      ang=(gcfg->srcparam1.y>0) ? TWO_PI*rand_uniform01(t) : acosf(2.f*rand_uniform01(t)-1.f); //sine distribution
+			  }while(ang>gcfg->srcparam1.x);
+		      }else{
+			  if(gcfg->srctype==MCX_SRC_ISOTROPIC) // uniform sphere
+			      ang=acosf(2.f*rand_uniform01(t)-1.f); //sine distribution
+			  else
+			      ang=ONE_PI*rand_uniform01(t); //uniform distribution in zenith angle, arcsine
+		      }
+		      sincosf(ang,&stheta,&ctheta);
+		      rotatevector(v,stheta,ctheta,sphi,cphi);
+                      *Lmove=0.f;
+		      break;
+		}
+		case(MCX_SRC_ZGAUSSIAN): {
+		      float ang,stheta,ctheta,sphi,cphi;
+		      ang=TWO_PI*rand_uniform01(t); //next arimuth angle
+		      sincosf(ang,&sphi,&cphi);
+		      ang=sqrtf(-2.f*logf(rand_uniform01(t)))*(1.f-2.f*rand_uniform01(t))*gcfg->srcparam1.x;
+		      sincosf(ang,&stheta,&ctheta);
+		      rotatevector(v,stheta,ctheta,sphi,cphi);
+                      *Lmove=0.f;
+		      break;
+		}
+		case(MCX_SRC_LINE):
+		case(MCX_SRC_SLIT): {
+		      float r=rand_uniform01(t);
+		      *((float4*)p)=float4(p->x+r*gcfg->srcparam1.x,
+					   p->y+r*gcfg->srcparam1.y,
+					   p->z+r*gcfg->srcparam1.z,
+					   p->w);
+		      if(gcfg->srctype==MCX_SRC_LINE){
+			      half r=f2h(1.f-2.f*rand_uniform01(t));
+			      half s=f2h(1.f-2.f*rand_uniform01(t));
+
+			      // fp16
+			      //q=sqrt(1.f-v->x*v->x-v->y*v->y)*(rand_uniform01(t)>0.5f ? 1.f : -1.f);
+			      half q=hmul(hsqrt(hsub(hsub(HALFONE, hmul(v->x,v->x)), hmul(v->y,v->y))) , (rand_uniform01(t)>0.5f ? HALFONE: HALFONENEG));
+
+			      //*((float4*)v)=float4(v->y*q-v->z*s,v->z*r-v->x*q,v->x*s-v->y*r,v->nscat);
+			      (*v).x = hsub(hmul(v->y, q) , hmul(v->z, s));
+			      (*v).y = hsub(hmul(v->z, r) , hmul(v->x, q));
+			      (*v).z = hsub(hmul(v->x, s) , hmul(v->y, r));
+		      }
+                      *rv=float3(rv->x+(gcfg->srcparam1.x)*0.5f,
+		                 rv->y+(gcfg->srcparam1.y)*0.5f,
+				 rv->z+(gcfg->srcparam1.z)*0.5f);
+                      *Lmove=(gcfg->srctype==MCX_SRC_SLIT)?-1.f:0.f;
+		      break;
+		}
+	  }
+
+          if(*Lmove<0.f && gcfg->c0.w!=0.f){ // if beam focus is set, determine the incident angle
+	        float Rn2=(gcfg->c0.w > 0.f) - (gcfg->c0.w < 0.f);
+
+	        rv->x+=gcfg->c0.w * h2f(v->x);
+		rv->y+=gcfg->c0.w * h2f(v->y);
+		rv->z+=gcfg->c0.w * h2f(v->z);
+
+		
+                v->x=f2h(Rn2*(rv->x-p->x));
+                v->y=f2h(Rn2*(rv->y-p->y));
+                v->z=f2h(Rn2*(rv->z-p->z));
+
+		//Rn2=rsqrtf(v->x*v->x+v->y*v->y+v->z*v->z); // normalize
+	        half Rn2Half = hrsqrt(hadd(hadd(hmul(v->x, v->x), hmul(v->x, v->x)), hmul(v->x, v->x)));
+
+                v->x=hmul(v->x, Rn2Half);
+                v->y=hmul(v->y, Rn2Half);
+                v->z=hmul(v->z, Rn2Half);
+	  }
+
+          //*rv=float3(__fdividef(1.f,v->x),__fdividef(1.f,v->y),__fdividef(1.f,v->z));
+          *rv=float3(__fdividef(1.f, h2f(v->x)),__fdividef(1.f, h2f(v->y)),__fdividef(1.f,h2f(v->z)));
+
+	  if((*mediaid & MED_MASK)==0){
+             int idx=skipvoid(p, v, f, rv, media); /*specular reflection of the bbx is taken care of here*/
+             if(idx>=0){
+		 *idx1d=idx;
+		 *mediaid=media[*idx1d];
+	     }
+	  }
+	  *w0+=1.f;
+	  if(*w0>gcfg->maxvoidstep)
+	     return -1;  // launch failed
+      }while((*mediaid & MED_MASK)==0 || p->w<=gcfg->minenergy);
+      f->ndone++; // launch successfully
+      *((float4*)(prop))=gproperty[*mediaid & MED_MASK]; //always use mediaid to read gproperty[]
+      if(gcfg->debuglevel & MCX_DEBUG_MOVE)
+          savedebugdata(p,(uint)f->ndone+threadid*gcfg->threadphoton+umin(threadid,(threadid<gcfg->oddphotons)*threadid),gdebugdata);
+
+      /*total energy enters the volume. for diverging/converting 
+      beams, this is less than nphoton due to specular reflection 
+      loss. This is different from the wide-field MMC, where the 
+      total launched energy includes the specular reflection loss*/
+      
+      *energylaunched+=p->w;
+      *w0=p->w;
+      //v->nscat=EPS;
+      v->nscat=FP16EPS;
+      *Lmove=0.f;
+      if((gcfg->debuglevel & MCX_DEBUG_PROGRESS) && ((int)(f->ndone) & 1) && (threadid==0 || threadid==blockDim.x * gridDim.x - 1 
+          || threadid==((blockDim.x * gridDim.x)>>1))) { // use the 1st, middle and last thread for progress report
+          gprogress[0]++;
+      }
+      return 0;
+}
+
+#endif
+
+
 kernel void mcx_test_rng(float field[],uint n_seed[]){
      int idx= blockDim.x * blockIdx.x + threadIdx.x;
      int i;
@@ -712,6 +1217,7 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 
      gpu_rng_init(t,n_seed,idx);
 
+#ifndef USE_HALF
      if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,0,ppath,&energyloss,
        &energylaunched,n_det,detectedphoton,t,photonseed,media,srcpattern,
        idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress)){
@@ -722,6 +1228,22 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
          return;
      }
      rv=float3(__fdividef(1.f,v->x),__fdividef(1.f,v->y),__fdividef(1.f,v->z));
+
+#else
+     if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,0,ppath,&energyloss,
+       &energylaunched,n_det,detectedphoton,t,photonseed,media,srcpattern,
+       idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress)){
+         GPUDEBUG(("thread %d: fail to launch photon\n",idx));
+	 n_pos[idx]=*((float4*)(&p));
+	 //n_dir[idx]=*((float4*)(v)); 
+	 n_dir[idx] = float4(h2f(v->x), h2f(v->y), h2f(v->z), h2f(v->nscat));
+	 n_len[idx]=*((float4*)(&f));
+         return;
+     }
+     rv=float3(__fdividef(1.f,h2f(v->x)),__fdividef(1.f,h2f(v->y)),__fdividef(1.f,h2f(v->z)));
+#endif
+
+
      isdet=mediaid & DET_MASK;
      mediaid &= MED_MASK; // keep isdet to 0 to avoid launching photon ina 
 
@@ -742,12 +1264,21 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 	  if(f.pscat<=0.f) {  // if this photon has finished his current jump, get next scat length & angles
                if(moves++>gcfg->reseedlimit){
                   moves=0;
+#ifndef USE_HALF
                   gpu_rng_reseed(t,n_seed,idx,(p.x+p.y+p.z+p.w)+f.ndone*(v->x+v->y+v->z));
+#else
+                  gpu_rng_reseed(t,n_seed,idx,(p.x+p.y+p.z+p.w)+f.ndone * h2f(hadd(hadd(v->x,v->y),v->z)));
+#endif
                }
    	       f.pscat=rand_next_scatlen(t); // random scattering probability, unit-less
 
                GPUDEBUG(("scat L=%f RNG=[%0lX %0lX] \n",f.pscat,t[0],t[1]));
+
+#ifndef USE_HALF
 	       if(v->nscat!=EPS){ // if this is not my first jump
+#else
+	       if(hne(v->nscat,FP16EPS)){ // if this is not my first jump
+#endif
                        //random arimuthal angle
 	               float cphi=1.f,sphi=0.f,theta,stheta,ctheta;
                        float tmp0=0.f;
@@ -756,7 +1287,12 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
                            sincosf(tmp0,&sphi,&cphi);
 		       }
                        GPUDEBUG(("scat phi=%f\n",tmp0));
+
+#ifndef USE_HALF
 		       tmp0=(v->nscat > gcfg->gscatter) ? 0.f : prop.g;
+#else
+		       tmp0=(h2f(v->nscat) > gcfg->gscatter) ? 0.f : prop.g;
+#endif
 
                        //Henyey-Greenstein Phase Function, "Handbook of Optical 
                        //Biomedical Diagnostics",2002,Chap3,p234, also see Boas2002
@@ -782,8 +1318,17 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 		           rotatevector2d(v,stheta,ctheta);
 		       else
                            rotatevector(v,stheta,ctheta,sphi,cphi);
+
+#ifndef USE_HALF
                        v->nscat++;
                        rv=float3(__fdividef(1.f,v->x),__fdividef(1.f,v->y),__fdividef(1.f,v->z));
+#else
+                       v->nscat = hadd(v->nscat, HALFONE);
+                       rv=float3(h2f(hrcp(v->x)), h2f(hrcp(v->y)), h2f(hrcp(v->z)));
+#endif
+
+
+
                        if(gcfg->outputtype==otWP){
                             // photontof[] and replayweight[] should be cached using local mem to avoid global read
                             int tshift=(int)(floorf((photontof[(idx*gcfg->threadphoton+min(idx,gcfg->oddphotons-1)+(int)f.ndone)]-gcfg->twin0)*gcfg->Rtstep));
@@ -801,21 +1346,36 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
                        if(gcfg->debuglevel & MCX_DEBUG_MOVE)
                            savedebugdata(&p,(uint)f.ndone+idx*gcfg->threadphoton+umin(idx,(idx<gcfg->oddphotons)*idx),gdebugdata);
 	       }
+
+#ifndef USE_HALF
 	       v->nscat=(int)v->nscat;
+#else
+	       v->nscat=int2half(half2int(v->nscat));
+#endif
 	  }
 
           n1=prop.n;
 	  *((float4*)(&prop))=gproperty[mediaid & MED_MASK];
 	  
 	  len=(gcfg->faststep) ? gcfg->minstep : hitgrid((float3*)&p,(float3*)v,&(htime.x),&rv.x,&flipdir); // propagate the photon to the first intersection to the grid
+#ifndef USE_HALF
 	  slen=len*prop.mus*(v->nscat+1.f > gcfg->gscatter ? (1.f-prop.g) : 1.f); //unitless (minstep=grid, mus=1/grid)
-
-          GPUDEBUG(("p=[%f %f %f] -> <%f %f %f>*%f -> hit=[%f %f %f] flip=%d\n",p.x,p.y,p.z,v->x,v->y,v->z,len,htime.x,htime.y,htime.z,flipdir));
+#else
+	  slen=len*prop.mus*(h2f(v->nscat)+1.f > gcfg->gscatter ? (1.f-prop.g) : 1.f); //unitless (minstep=grid, mus=1/grid)
+#endif
+          //GPUDEBUG(("p=[%f %f %f] -> <%f %f %f>*%f -> hit=[%f %f %f] flip=%d\n",p.x,p.y,p.z,v->x,v->y,v->z,len,htime.x,htime.y,htime.z,flipdir));
 
           // dealing with absorption
 	  slen=fmin(slen,f.pscat);
+
+#ifndef USE_HALF
 	  len=slen/(prop.mus*(v->nscat+1.f > gcfg->gscatter ? (1.f-prop.g) : 1.f));
 	  *((float3*)(&p)) = (gcfg->faststep || slen==f.pscat) ? float3(p.x+len*v->x,p.y+len*v->y,p.z+len*v->z) : float3(htime.x,htime.y,htime.z);
+#else
+	  len=slen/(prop.mus*(h2f(v->nscat)+1.f > gcfg->gscatter ? (1.f-prop.g) : 1.f));
+	  *((float3*)(&p)) = (gcfg->faststep || slen==f.pscat) ? float3(p.x+len*h2f(v->x),p.y+len*h2f(v->y),p.z+len*h2f(v->z)) : float3(htime.x,htime.y,htime.z);
+#endif
+
 	  p.w*=expf(-prop.mua*len);
 	  f.pscat-=slen;     //remaining probability: sum(s_i*mus_i), unit-less
 	  f.t+=len*prop.n*gcfg->oneoverc0; //propagation time  (unit=s)
@@ -950,7 +1510,11 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 
                   tmp0=n1*n1;
                   tmp1=prop.n*prop.n;
+#ifndef USE_HALF
 		  cphi=fabs( (flipdir==0) ? v->x : (flipdir==1 ? v->y : v->z)); // cos(si)
+#else
+		  cphi=fabs( (flipdir==0) ? h2f(v->x) : (flipdir==1 ? h2f(v->y) : h2f(v->z))); // cos(si)
+#endif
 		  sphi=1.f-cphi*cphi;            // sin(si)^2
 
                   len=1.f-tmp0/tmp1*sphi;   //1-[n1/n2*sin(si)]^2 = cos(ti)^2
@@ -977,9 +1541,16 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 			    continue;
 			}
 	                GPUDEBUG(("do transmission\n"));
+#ifndef USE_HALF
                         rv=float3(__fdividef(1.f,v->x),__fdividef(1.f,v->y),__fdividef(1.f,v->z));
+#else
+                        rv=float3(h2f(hrcp(v->x)),h2f(hrcp(v->y)),h2f(hrcp(v->z)));
+#endif
+
+
 		  }else{ //do reflection
-	                GPUDEBUG(("ref faceid=%d p=[%f %f %f] v_old=[%f %f %f]\n",flipdir,p.x,p.y,p.z,v->x,v->y,v->z));
+	                //GPUDEBUG(("ref faceid=%d p=[%f %f %f] v_old=[%f %f %f]\n",flipdir,p.x,p.y,p.z,v->x,v->y,v->z));
+#ifndef USE_HALF
 			(flipdir==0) ? (v->x=-v->x) : ((flipdir==1) ? (v->y=-v->y) : (v->z=-v->z)) ;
                         rv=float3(__fdividef(1.f,v->x),__fdividef(1.f,v->y),__fdividef(1.f,v->z));
 			(flipdir==0) ?
@@ -987,6 +1558,18 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 			    ((flipdir==1) ? 
 				(p.y=mcx_nextafterf(__float2int_rn(p.y), (v->x > 0.f)-(v->x < 0.f))) :
 				(p.z=mcx_nextafterf(__float2int_rn(p.z), (v->x > 0.f)-(v->x < 0.f))) );
+#else
+			(flipdir==0) ? (v->x=hneg(v->x)) : ((flipdir==1) ? (v->y=hneg(v->y)) : (v->z=hneg(v->z))) ;
+                        rv=float3(h2f(hrcp(v->x)),h2f(hrcp(v->y)),h2f(hrcp(v->z)));
+
+			if(flipdir == 0) {
+			    p.x=h2f(mcx_nextafter_half(f2h(p.x), (hlt(v->x, HALFZERO)? 1 : 0)- (hlt(v->x, HALFZERO)? 1 : 0)));
+			} else if (flipdir == 1) {
+			    p.y=h2f(mcx_nextafter_half(f2h(p.y), (hlt(v->x, HALFZERO)? 1 : 0)- (hlt(v->x, HALFZERO)? 1 : 0)));
+			} else {
+			    p.z=h2f(mcx_nextafter_half(f2h(p.z), (hlt(v->x, HALFZERO)? 1 : 0)- (hlt(v->x, HALFZERO)? 1 : 0)));
+			}
+#endif
 	                GPUDEBUG(("ref p_new=[%f %f %f] v_new=[%f %f %f]\n",p.x,p.y,p.z,v->x,v->y,v->z));
                 	idx1d=idx1dold;
 		 	mediaid=(media[idx1d] & MED_MASK);

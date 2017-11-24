@@ -24,6 +24,11 @@
 #ifndef _MCEXTREME_GPU_LAUNCH_H
 #define _MCEXTREME_GPU_LAUNCH_H
 
+#ifdef USE_HALF
+    #include <cuda_fp16.h>
+    #include "fp16_conversion.h"   // host function for half conversion
+#endif
+
 #include "mcx_utils.h"
 
 #ifdef  __cplusplus
@@ -47,12 +52,21 @@ extern "C" {
 
 typedef float4 MCXpos; /**< x,y,z: position of the photon, w: weight of the photon*/
 
+#ifndef USE_HALF
 typedef struct  __align__(16) MCXDir{
         float x; /**< directional vector of the photon, x-component*/
 	float y; /**< directional vector of the photon, y-component*/
 	float z; /**< directional vector of the photon, z-component*/
         float nscat; /**< total number of scattering events*/
 }MCXdir;
+#else
+typedef struct  __align__(8) MCXDir{
+        half x; /**< directional vector of the photon, x-component*/
+	half y; /**< directional vector of the photon, y-component*/
+	half z; /**< directional vector of the photon, z-component*/
+        half nscat; /**< total number of scattering events*/
+}MCXdir;
+#endif
 
 typedef struct  __align__(16) MCXTimer{
         float pscat; /**< remaining scattering probability, unit-less*/

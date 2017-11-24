@@ -27,7 +27,11 @@ DOXY       := doxygen
 DOCDIR     := $(MCXDIR)/doc
 DOXYCFG=mcxdoxy.cfg
 
-INCLUDEDIRS=-I/usr/local/cuda/include
+#CUDA_PATH=/pub/cuda-8.0
+CUDA_PATH=/usr/local/cuda-8.0
+
+#INCLUDEDIRS=-I/usr/local/cuda/include
+INCLUDEDIRS=-I$(CUDA_PATH)/include
 
 CUDART=-lcudart
 CUOMPLINK=
@@ -91,9 +95,9 @@ else
      CUCCOPT +=-m64
      ifeq "$(wildcard /usr/local/cuda/lib64)" "/usr/local/cuda/lib64"
         ifeq ($(BACKEND),cuda)
-           LINKOPT=-L/usr/local/cuda/lib64 $(CUDART) -lm -lstdc++
+           LINKOPT=-L$(CUDA_PATH)/lib64 $(CUDART) -lm -lstdc++
         else ifeq ($(BACKEND),cudastatic)
-           LINKOPT=-L/usr/local/cuda/lib64 $(CUDART) -lm -static-libgcc -static-libstdc++
+           LINKOPT=-L$(CUDA_PATH)/lib64 $(CUDART) -lm -static-libgcc -static-libstdc++
         endif
      endif
   endif
@@ -133,14 +137,14 @@ detbox mexbox octbox: CUCCOPT+=-DMCX_TARGET_NAME='"Cached Detective MCX"'
 fermi fermimex fermioct: CUCCOPT+=-DMCX_TARGET_NAME='"Fermi MCX"'
 det detbox: BINARY:=$(BINARY)_det
 logbox detbox:          BINARY:=$(BINARY)_cached
-all xorfermi maxwell pascal half:    fermi
+all xorfermi maxwell pascal:    fermi
 maxwell:    CUGENCODE=-arch=compute_20 -code=sm_20 -code=sm_30 -code=sm_35 -code=sm_50 -code=sm_52
-pascal:     CUGENCODE=-arch=compute_20 -code=sm_20 -code=sm_30 -code=sm_35 -code=sm_50 -code=sm_52 -code=sm_61
+#pascal:     CUGENCODE=-arch=compute_20 -code=sm_20 -code=sm_30 -code=sm_35 -code=sm_50 -code=sm_52 -code=sm_61
+#pascal:     CUGENCODE=-arch=sm_61
+pascal:     CUGENCODE=-arch=sm_60 -DUSE_HALF
 xormax:     maxwell
 xorpas:     pascal
 xorfermi xormax xorpas:     CUCCOPT+=-DUSE_XORSHIFT128P_RAND
-half:       CUCCOPT+=-DUSE_HALF
-half:       CUGENCODE=-arch=compute_60
 
 
 static:     xorfermi
@@ -194,7 +198,8 @@ $(OUTPUT_DIR)/$(BINARY): $(OBJS)
 	$(CC) $(INCLUDEDIRS) $(CPPOPT) -c -o $@  $<
 
 %$(OBJSUFFIX): %.cu
-	$(CUDACC) -c $(CUCCOPT) -o $@  $<
+	$(CUDACC) -c $(CUCCOPT)  -o $@  $<
+	#$(CUDACC) -c $(CUCCOPT) -Xptxas -v  -o $@  $<
 
 clean:
 	-rm -f $(OBJS) $(OUTPUT_DIR)/$(BINARY)$(EXESUFFIX) $(OUTPUT_DIR)/$(BINARY)_atomic$(EXESUFFIX) $(OUTPUT_DIR)/$(BINARY)_det$(EXESUFFIX)
