@@ -101,6 +101,8 @@ typedef union  __align__(16) GProperty{
 
 typedef unsigned char uchar;
 
+
+#ifndef USE_HALF
 typedef struct  __align__(16) KernelParams {
   float3 vsize;
   float  minstep;
@@ -141,6 +143,50 @@ typedef struct  __align__(16) KernelParams {
   unsigned int gscatter;
   unsigned int is2d;
 }MCXParam;
+#else
+typedef struct  __align__(16) KernelParams {
+  float3 vsize;
+  float  minstep;
+  float  twin0,twin1,tmax;
+  float  oneoverc0;
+  unsigned int save2pt,doreflect,dorefint,savedet;
+  float  Rtstep;
+  //half[4] ps;
+  float4 ps;
+  float4 c0;
+  float3 maxidx;
+  uint3  dimlen,cp0,cp1;
+  uint2  cachebox;
+  float  minenergy;
+  float  skipradius2;
+  float  minaccumtime;
+  int    srctype;
+  float4 srcparam1;
+  float4 srcparam2;
+  int voidtime;
+  unsigned int maxdetphoton;
+  unsigned int maxmedia;
+  unsigned int detnum;
+  unsigned int idx1dorig;
+  unsigned int mediaidorig;
+  unsigned int reseedlimit;
+  unsigned int isatomic;
+  unsigned int maxvoidstep;
+  unsigned int issaveseed;
+  unsigned int issaveexit;
+  unsigned int issaveref;
+  unsigned int seedoffset;
+  int seed;
+  unsigned int outputtype;
+  int threadphoton;
+  int oddphotons;
+  int faststep;
+  unsigned int debuglevel;
+  unsigned int maxjumpdebug;
+  unsigned int gscatter;
+  unsigned int is2d;
+}MCXParam;
+#endif
 
 void mcx_run_simulation(Config *cfg,GPUInfo *gpu);
 int  mcx_list_gpu(Config *cfg, GPUInfo **info);
