@@ -180,7 +180,7 @@ __device__ inline void savedetphoton(uint detid,float n_det[],uint *detectedphot
 /*
  * fp 16
  */
-__device__ inline void savedetphoton(uint detid,float n_det[],uint *detectedphoton, half nscat,float *ppath, half *p0,MCXdir *v,RandType t[RAND_BUF_LEN],RandType *seeddata){
+__device__ inline void savedetphoton(uint detid,float n_det[],uint *detectedphoton, half nscat,float *ppath, half *p0, MCXdir *v,RandType t[RAND_BUF_LEN],RandType *seeddata){
       detid=finddetector(p0,detid-1);
       if(detid){
 	 uint baseaddr=atomicAdd(detectedphoton,1);
@@ -939,7 +939,7 @@ __device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,
  * fp16 implementation
  */
 template <int mcxsource>
-__device__ inline int launchnewphoton(half *p,MCXdir *v,MCXtime *f, half *rv,Medium *prop,uint *idx1d,
+__device__ inline int launchnewphoton(half *p, MCXdir *v,MCXtime *f, half *rv,Medium *prop,uint *idx1d,
            uint *mediaid,float *w0,float *Lmove,uint isdet, float ppath[],float energyloss[],float energylaunched[],float n_det[],uint *dpnum,
 	   RandType t[RAND_BUF_LEN],RandType photonseed[RAND_BUF_LEN],
 	   uint media[],float srcpattern[],int threadid,RandType rngseed[],RandType seeddata[],float gdebugdata[],volatile int gprogress[]){
@@ -958,7 +958,7 @@ __device__ inline int launchnewphoton(half *p,MCXdir *v,MCXtime *f, half *rv,Med
       // let's handle detectors here
           if(gcfg->savedet){
              if(isdet && *mediaid==0)
-	         savedetphoton((isdet>>16),n_det,dpnum,v->nscat,ppath,p,v,photonseed,seeddata);
+	         savedetphoton((isdet>>16),n_det,dpnum,v->nscat,ppath,p, v,photonseed,seeddata);
              clearpath(ppath,gcfg->maxmedia);
           }
 #endif
@@ -1386,6 +1386,7 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
   #endif
 
      MCXdir *v=(MCXdir*)(sharedmem+(threadIdx.x<<2));   //{x,y,z}: unitary direction vector in grid unit, nscat:total scat event
+
      MCXtime f={0.f,0.f,0.f,-1.f};   //pscat: remaining scattering probability,t: photon elapse time, 
                   //tnext: next accumulation time, ndone: completed photons
      float  energyloss=genergy[idx<<1];
@@ -1451,7 +1452,7 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
      rv=float3(__fdividef(1.f,v->x),__fdividef(1.f,v->y),__fdividef(1.f,v->z));
 
   #else
-     if(launchnewphoton<mcxsource>(&p[0],v, &f, &rv[0],&prop,&idx1d,&mediaid,&w0,&Lmove,0,ppath,&energyloss,
+     if(launchnewphoton<mcxsource>(&p[0], v, &f, &rv[0],&prop,&idx1d,&mediaid,&w0,&Lmove,0,ppath,&energyloss,
        &energylaunched,n_det,detectedphoton,t,photonseed,media,srcpattern,
        idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress)){
          GPUDEBUG(("thread %d: fail to launch photon\n",idx));
@@ -1957,15 +1958,19 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 
 #ifndef USE_HALF
      n_pos[idx]=*((float4*)(&p));
+
+     n_dir[idx]=*((float4*)(v));
 #else
      n_pos[idx].x = h2f(p[0]); 
      n_pos[idx].y = h2f(p[1]); 
      n_pos[idx].z = h2f(p[2]); 
      n_pos[idx].w = h2f(p[3]); 
+
+     n_dir[idx] = float4(h2f(v->x), h2f(v->y), h2f(v->z), h2f(v->nscat));
 #endif
 
 
-     n_dir[idx]=*((float4*)(v));
+
      n_len[idx]=*((float4*)(&f));
 }
 
