@@ -289,7 +289,7 @@ __device__ inline half mcx_nextafter_half(const half a, const short dir){
 
 
 
-__device__ inline float hitgrid(float3 *p0, float3 *v, float *htime, half *rv,int *id){
+__device__ inline float hitgrid(float3 *p0, float3 *v, half *htime, half *rv,int *id){
       float dist;
 
       union {
@@ -327,9 +327,13 @@ __device__ inline float hitgrid(float3 *p0, float3 *v, float *htime, half *rv,in
 
       h1.h2 =__hfma2(vxy.h2,__floats2half2_rn(dist,dist),pxy.h2);
       h2.h2 =__hfma2(vzw.h2,__floats2half2_rn(dist,dist),pzw.h2);
-      htime[0]=__half2float(h1.h[0]);
-      htime[1]=__half2float(h1.h[1]);
-      htime[2]=__half2float(h2.h[0]);
+
+      //htime[0]=__half2float(h1.h[0]);
+      //htime[1]=__half2float(h1.h[1]);
+      //htime[2]=__half2float(h2.h[0]);
+      htime[0]=h1.h[0];
+      htime[1]=h1.h[1];
+      htime[2]=h2.h[0];
 
       temp.h2 = __floats2half2_rn(0.f, 0.f);
       pxy.h2=__hgt2(vxy.h2, temp.h2 );
@@ -340,9 +344,12 @@ __device__ inline float hitgrid(float3 *p0, float3 *v, float *htime, half *rv,in
       temp.h2=__hgt2(vzw.h2, temp.h2 );
       pzw.h2=__hsub2(temp.h2,pzw.h2 );
 
-      if((*id) == 0) htime[0] = __half2float(mcx_nextafter_half(hrint(h1.h[0]), __half2short_rn(pxy.h[0])));
-      if((*id) == 1) htime[1] = __half2float(mcx_nextafter_half(hrint(h1.h[1]), __half2short_rn(pxy.h[1])));
-      if((*id) == 2) htime[2] = __half2float(mcx_nextafter_half(hrint(h2.h[0]), __half2short_rn(pzw.h[0])));
+      //if((*id) == 0) htime[0] = __half2float(mcx_nextafter_half(hrint(h1.h[0]), __half2short_rn(pxy.h[0])));
+      //if((*id) == 1) htime[1] = __half2float(mcx_nextafter_half(hrint(h1.h[1]), __half2short_rn(pxy.h[1])));
+      //if((*id) == 2) htime[2] = __half2float(mcx_nextafter_half(hrint(h2.h[0]), __half2short_rn(pzw.h[0])));
+      if((*id) == 0) htime[0] = mcx_nextafter_half(hrint(h1.h[0]), __half2short_rn(pxy.h[0]));
+      if((*id) == 1) htime[1] = mcx_nextafter_half(hrint(h1.h[1]), __half2short_rn(pxy.h[1]));
+      if((*id) == 2) htime[2] = mcx_nextafter_half(hrint(h2.h[0]), __half2short_rn(pzw.h[0]));
 
       return dist;
 }
@@ -500,7 +507,7 @@ __device__ inline int skipvoid(half *p,MCXdir *v,MCXtime *f, half*rv, uint media
 
 	    if(media[idx1d] & MED_MASK){ // if inside
                 //GPUDEBUG(("inside volume [%f %f %f] v=<%f %f %f>\n",p->x,p->y,p->z,v->x,v->y,v->z));
-	        float3 htime;
+	        half htime[3];
                 int flipdir;
 
 		p[0] = hsub(p[0], v->x);
@@ -521,12 +528,12 @@ __device__ inline int skipvoid(half *p,MCXdir *v,MCXtime *f, half*rv, uint media
 
 		    float3 pp = make_float3(h2f(p[0]), h2f(p[1]), h2f(p[2]));
 
-	            f->t+=gcfg->minaccumtime*hitgrid( &pp,(float3*)v,&htime.x, &rv[0],&flipdir);
+	            f->t+=gcfg->minaccumtime*hitgrid(&pp,(float3*)v, &htime[0], &rv[0],&flipdir);
 
                     //*((float4*)(p))=float4(htime.x,htime.y,htime.z,p->w);
-		    p[0] = f2h(htime.x);
-		    p[1] = f2h(htime.y);
-		    p[2] = f2h(htime.z);
+		    p[0] = htime[0];
+		    p[1] = htime[1];
+		    p[2] = htime[2];
 
                     //idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
 		    idx1d = half2int(hfloor(p[2])) * gcfg->dimlen.y +  half2int(hfloor(p[1])) * gcfg->dimlen.x + half2int(hfloor(p[0]));
@@ -1372,11 +1379,11 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
      if(idx>=gcfg->threadphoton*(blockDim.x * gridDim.x)+gcfg->oddphotons)
          return;
 
-#ifndef USE_HALF
+  #ifndef USE_HALF
      MCXpos  p={0.f,0.f,0.f,-1.f};//{x,y,z}: coordinates in grid unit, w:packet weight
-#else
+  #else
      half p[4] = {HALFZERO, HALFZERO, HALFZERO, HALFONENEG};
-#endif
+  #endif
 
      MCXdir *v=(MCXdir*)(sharedmem+(threadIdx.x<<2));   //{x,y,z}: unitary direction vector in grid unit, nscat:total scat event
      MCXtime f={0.f,0.f,0.f,-1.f};   //pscat: remaining scattering probability,t: photon elapse time, 
@@ -1393,12 +1400,13 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
      uint  mediaid=gcfg->mediaidorig;
      uint  mediaidold=0,isdet=0;
      float  n1;   //reflection var
-     float3 htime;            //time-of-fly for collision test
 
   #ifndef USE_HALF
      float3 rv;               //reciprocal velocity
+     float3 htime;            //time-of-fly for collision test
   #else
      half rv[3];
+     half htime[3];
   #endif
 
      //for MT RNG, these will be zero-length arrays and be optimized out
@@ -1429,7 +1437,7 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 
      gpu_rng_init(t,n_seed,idx);
 
-#ifndef USE_HALF
+  #ifndef USE_HALF
      if(launchnewphoton<mcxsource>(&p,v,&f,&rv,&prop,&idx1d,&mediaid,&w0,&Lmove,0,ppath,&energyloss,
        &energylaunched,n_det,detectedphoton,t,photonseed,media,srcpattern,
        idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress)){
@@ -1442,8 +1450,8 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 
      rv=float3(__fdividef(1.f,v->x),__fdividef(1.f,v->y),__fdividef(1.f,v->z));
 
-#else
-     if(launchnewphoton<mcxsource>(&p[0],v,&f, &rv[0],&prop,&idx1d,&mediaid,&w0,&Lmove,0,ppath,&energyloss,
+  #else
+     if(launchnewphoton<mcxsource>(&p[0],v, &f, &rv[0],&prop,&idx1d,&mediaid,&w0,&Lmove,0,ppath,&energyloss,
        &energylaunched,n_det,detectedphoton,t,photonseed,media,srcpattern,
        idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress)){
          GPUDEBUG(("thread %d: fail to launch photon\n",idx));
@@ -1462,7 +1470,7 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
      rv[0] = hdiv(HALFONE, v->x);
      rv[1] = hdiv(HALFONE, v->y);
      rv[2] = hdiv(HALFONE, v->z);
-#endif
+  #endif
 
 
      isdet=mediaid & DET_MASK;
@@ -1578,37 +1586,37 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 
 	       }
 
-#ifndef USE_HALF
+  #ifndef USE_HALF
 	       v->nscat=(int)v->nscat;
-#else
+  #else
 	       v->nscat=int2half(half2int(v->nscat));
-#endif
+  #endif
 	  }
 
           n1=prop.n;
 	  *((float4*)(&prop))=gproperty[mediaid & MED_MASK];
 	  
-#ifndef USE_HALF
+  #ifndef USE_HALF
 	  len=(gcfg->faststep) ? gcfg->minstep : hitgrid((float3*)&p,(float3*)v,&(htime.x),&rv.x,&flipdir); // propagate the photon to the first intersection to the grid
 	  slen=len*prop.mus*(v->nscat+1.f > gcfg->gscatter ? (1.f-prop.g) : 1.f); //unitless (minstep=grid, mus=1/grid)
-#else
+  #else
 	  float3 pp = make_float3(h2f(p[0]), h2f(p[1]), h2f(p[2]));
 	  //len=(gcfg->faststep) ? gcfg->minstep : hitgrid((float3*)&pp,(float3*)v,&(htime.x),&rv.x,&flipdir); // propagate the photon to the first intersection to the grid
-	  len=(gcfg->faststep) ? gcfg->minstep : hitgrid((float3*)&pp,(float3*)v,&(htime.x), &rv[0], &flipdir); // propagate the photon to the first intersection to the grid
+	  len=(gcfg->faststep) ? gcfg->minstep : hitgrid((float3*)&pp, (float3*)v, &htime[0], &rv[0], &flipdir); // propagate the photon to the first intersection to the grid
 	  slen=len*prop.mus*(h2f(v->nscat)+1.f > gcfg->gscatter ? (1.f-prop.g) : 1.f); //unitless (minstep=grid, mus=1/grid)
-#endif
+  #endif
+
           //GPUDEBUG(("p=[%f %f %f] -> <%f %f %f>*%f -> hit=[%f %f %f] flip=%d\n",p.x,p.y,p.z,v->x,v->y,v->z,len,htime.x,htime.y,htime.z,flipdir));
 
           // dealing with absorption
 	  slen=fmin(slen,f.pscat);
 
-#ifndef USE_HALF
+  #ifndef USE_HALF
 	  len=slen/(prop.mus*(v->nscat+1.f > gcfg->gscatter ? (1.f-prop.g) : 1.f));
 	  *((float3*)(&p)) = (gcfg->faststep || slen==f.pscat) ? float3(p.x+len*v->x,p.y+len*v->y,p.z+len*v->z) : float3(htime.x,htime.y,htime.z);
 	  p.w*=expf(-prop.mua*len);
-#else
+  #else
 	  len=slen/(prop.mus*(h2f(v->nscat)+1.f > gcfg->gscatter ? (1.f-prop.g) : 1.f));
-	  // tbc
 	  //*((float3*)(&p)) = (gcfg->faststep || slen==f.pscat) ? float3(p.x+len*h2f(v->x),p.y+len*h2f(v->y),p.z+len*h2f(v->z)) : float3(htime.x,htime.y,htime.z);
 	  if (gcfg->faststep || slen==f.pscat)  {
 	      half len_half = f2h(len);
@@ -1616,9 +1624,9 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 	      p[1] = hadd(hmul(len_half, v->y), p[1]);
 	      p[2] = hadd(hmul(len_half, v->z), p[2]);
 	  } else {
-	      p[0] = f2h(htime.x);
-	      p[1] = f2h(htime.y);
-	      p[2] = f2h(htime.z);
+	      p[0] = htime[0];
+	      p[1] = htime[1];
+	      p[2] = htime[2];
 	  }
 	   
 	  half pw = f2h(expf(-prop.mua*len));
