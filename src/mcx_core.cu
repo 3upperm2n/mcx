@@ -1137,7 +1137,8 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 	  *((float4*)(&prop))=gproperty[mediaid & MED_MASK];
 	  
 	  /** Advance photon 1 step to the next voxel */
-	  len=(gcfg->faststep) ? gcfg->minstep : hitgrid((float3*)&p,(float3*)v,&(htime.x),&rv.x,&flipdir); // propagate the photon to the first intersection to the grid
+	  //len=(gcfg->faststep) ? gcfg->minstep : hitgrid((float3*)&p,(float3*)v,&(htime.x),&rv.x,&flipdir); // propagate the photon to the first intersection to the grid
+	  len=(gcfg->faststep) ? (float)gcfg->minstep : hitgrid((float3*)&p,(float3*)v,&(htime.x),&rv.x,&flipdir);
 	  
 	  /** convert photon movement length to unitless scattering length by multiplying with mus */
 	  slen=len*prop.mus*(v->nscat+1.f > gcfg->gscatter ? (1.f-prop.g) : 1.f); //unitless (minstep=grid, mus=1/grid)
@@ -1521,730 +1522,732 @@ int mcx_list_gpu(Config *cfg, GPUInfo **info){
  */
 
 void mcx_run_simulation(Config *cfg,GPUInfo *gpu){
+	int i,iter;
+	//float  minstep=1.f; //MIN(MIN(cfg->steps.x,cfg->steps.y),cfg->steps.z);
+	double minstep=1.0;
 
-     int i,iter;
-     float  minstep=1.f; //MIN(MIN(cfg->steps.x,cfg->steps.y),cfg->steps.z);
-     float4 p0=float4(cfg->srcpos.x,cfg->srcpos.y,cfg->srcpos.z,1.f);
-     float4 c0=cfg->srcdir;
-     float3 maxidx=float3(cfg->dim.x,cfg->dim.y,cfg->dim.z);
-     float *energy;
-     int timegate=0, totalgates, gpuid, threadid=0;
-     size_t gpuphoton=0, photoncount=0;
+	float4 p0=float4(cfg->srcpos.x,cfg->srcpos.y,cfg->srcpos.z,1.f);
 
-     unsigned int printnum;
-     unsigned int tic,tic0,tic1,toc=0,debuglen=MCX_DEBUG_REC_LEN;
-     size_t fieldlen;
-     uint3 cp0=cfg->crop0,cp1=cfg->crop1;
-     uint2 cachebox;
-     uint4 dimlen;
-     float Vvox,fullload=0.f;
+	float4 c0=cfg->srcdir;
+	float3 maxidx=float3(cfg->dim.x,cfg->dim.y,cfg->dim.z);
+	float *energy;
+	int timegate=0, totalgates, gpuid, threadid=0;
+	size_t gpuphoton=0, photoncount=0;
 
-     dim3 mcgrid, mcblock;
-     dim3 clgrid, clblock;
+	unsigned int printnum;
+	unsigned int tic,tic0,tic1,toc=0,debuglen=MCX_DEBUG_REC_LEN;
+	size_t fieldlen;
+	uint3 cp0=cfg->crop0,cp1=cfg->crop1;
+	uint2 cachebox;
+	uint4 dimlen;
+	float Vvox,fullload=0.f;
 
-     int dimxyz=cfg->dim.x*cfg->dim.y*cfg->dim.z;
-     
-     uint  *media=(uint *)(cfg->vol);
-     float  *field;
-     float4 *Ppos,*Pdir,*Plen,*Plen0;
-     uint   *Pseed;
-     float  *Pdet;
-     RandType *seeddata=NULL;
-     uint    detected=0,sharedbuf=0;
+	dim3 mcgrid, mcblock;
+	dim3 clgrid, clblock;
 
-     volatile int *progress, *gprogress;
+	int dimxyz=cfg->dim.x*cfg->dim.y*cfg->dim.z;
+
+	uint  *media=(uint *)(cfg->vol);
+	float  *field;
+	float4 *Ppos,*Pdir,*Plen,*Plen0;
+	uint   *Pseed;
+	float  *Pdet;
+	RandType *seeddata=NULL;
+	uint    detected=0,sharedbuf=0;
+
+	volatile int *progress, *gprogress;
 #ifndef WIN32
-     cudaEvent_t updateprogress;
+	cudaEvent_t updateprogress;
 #endif
 
-     uint *gmedia;
-     float4 *gPpos,*gPdir,*gPlen;
-     uint   *gPseed,*gdetected;
-     int    *greplaydetid=NULL;
-     float  *gPdet,*gsrcpattern,*gfield,*genergy,*greplayw=NULL,*greplaytof=NULL,*gdebugdata=NULL;
-     RandType *gseeddata=NULL;
-     int detreclen=cfg->medianum+1+(cfg->issaveexit>0)*6+((cfg->ismomentum>0)*(cfg->medianum-1));
-     unsigned int is2d=(cfg->dim.x==1 ? 1 : (cfg->dim.y==1 ? 2 : (cfg->dim.z==1 ? 3 : 0)));
-     MCXParam param={cfg->steps,minstep,0,0,cfg->tend,R_C0*cfg->unitinmm,
-                     (uint)cfg->issave2pt,(uint)cfg->isreflect,(uint)cfg->isrefint,(uint)cfg->issavedet,1.f/cfg->tstep,
-		     p0,c0,maxidx,uint4(0,0,0,0),cp0,cp1,uint2(0,0),cfg->minenergy,
-                     cfg->sradius*cfg->sradius,minstep*R_C0*cfg->unitinmm,cfg->srctype,
-		     cfg->srcparam1,cfg->srcparam2,cfg->voidtime,cfg->maxdetphoton,
-		     cfg->medianum-1,cfg->detnum,cfg->maxgate,0,0,cfg->reseedlimit,ABS(cfg->sradius+2.f)<EPS /*isatomic*/,
-		     (uint)cfg->maxvoidstep,cfg->issaveseed>0,cfg->issaveexit>0,cfg->issaveref>0,cfg->ismomentum>0,cfg->isspecular>0,
-		     cfg->maxdetphoton*detreclen,cfg->seed,(uint)cfg->outputtype,0,0,cfg->faststep,
-		     cfg->debuglevel,(uint)cfg->maxjumpdebug,cfg->gscatter,is2d,cfg->replaydet};
-     if(param.isatomic)
-         param.skipradius2=0.f;
+	uint *gmedia;
+	float4 *gPpos,*gPdir,*gPlen;
+	uint   *gPseed,*gdetected;
+	int    *greplaydetid=NULL;
+	float  *gPdet,*gsrcpattern,*gfield,*genergy,*greplayw=NULL,*greplaytof=NULL,*gdebugdata=NULL;
+	RandType *gseeddata=NULL;
+	int detreclen=cfg->medianum+1+(cfg->issaveexit>0)*6+((cfg->ismomentum>0)*(cfg->medianum-1));
+	unsigned int is2d=(cfg->dim.x==1 ? 1 : (cfg->dim.y==1 ? 2 : (cfg->dim.z==1 ? 3 : 0)));
+	MCXParam param={cfg->steps,minstep,0,0,cfg->tend,R_C0*cfg->unitinmm,
+		(uint)cfg->issave2pt,(uint)cfg->isreflect,(uint)cfg->isrefint,(uint)cfg->issavedet,1.f/cfg->tstep,
+		p0,c0,maxidx,uint4(0,0,0,0),cp0,cp1,uint2(0,0),cfg->minenergy,
+		cfg->sradius*cfg->sradius, (float)minstep*R_C0*cfg->unitinmm,cfg->srctype,
+		cfg->srcparam1,cfg->srcparam2,cfg->voidtime,cfg->maxdetphoton,
+		cfg->medianum-1,cfg->detnum,cfg->maxgate,0,0,cfg->reseedlimit,ABS(cfg->sradius+2.f)<EPS /*isatomic*/,
+		(uint)cfg->maxvoidstep,cfg->issaveseed>0,cfg->issaveexit>0,cfg->issaveref>0,cfg->ismomentum>0,cfg->isspecular>0,
+		cfg->maxdetphoton*detreclen,cfg->seed,(uint)cfg->outputtype,0,0,cfg->faststep,
+		cfg->debuglevel,(uint)cfg->maxjumpdebug,cfg->gscatter,is2d,cfg->replaydet};
+	if(param.isatomic)
+		param.skipradius2=0.f;
 
 #ifdef _OPENMP
-     threadid=omp_get_thread_num();
+	threadid=omp_get_thread_num();
 #endif
-     if(threadid<MAX_DEVICE && cfg->deviceid[threadid]=='\0')
-           return;
+	if(threadid<MAX_DEVICE && cfg->deviceid[threadid]=='\0')
+		return;
 
-     gpuid=cfg->deviceid[threadid]-1;
-     CUDA_ASSERT(cudaSetDevice(gpuid));
+	gpuid=cfg->deviceid[threadid]-1;
+	CUDA_ASSERT(cudaSetDevice(gpuid));
 
-     if(gpu[gpuid].maxgate==0 && dimxyz>0){
-         int needmem=dimxyz+cfg->nthread*sizeof(float4)*4+sizeof(float)*cfg->maxdetphoton*detreclen+10*1024*1024; /*keep 10M for other things*/
-         gpu[gpuid].maxgate=(gpu[gpuid].globalmem-needmem)/(cfg->dim.x*cfg->dim.y*cfg->dim.z);
-         gpu[gpuid].maxgate=MIN(((cfg->tend-cfg->tstart)/cfg->tstep+0.5),gpu[gpuid].maxgate);     
-     }
-     /*only allow the master thread to modify cfg, others are read-only*/
+	if(gpu[gpuid].maxgate==0 && dimxyz>0){
+		int needmem=dimxyz+cfg->nthread*sizeof(float4)*4+sizeof(float)*cfg->maxdetphoton*detreclen+10*1024*1024; /*keep 10M for other things*/
+		gpu[gpuid].maxgate=(gpu[gpuid].globalmem-needmem)/(cfg->dim.x*cfg->dim.y*cfg->dim.z);
+		gpu[gpuid].maxgate=MIN(((cfg->tend-cfg->tstart)/cfg->tstep+0.5),gpu[gpuid].maxgate);     
+	}
+	/*only allow the master thread to modify cfg, others are read-only*/
 #pragma omp master
-{
-     if(cfg->exportfield==NULL){
-         if(cfg->seed==SEED_FROM_FILE && cfg->replaydet==-1){
-	     cfg->exportfield=(float *)calloc(sizeof(float)*dimxyz,gpu[gpuid].maxgate*2*cfg->detnum);
-	 }else{
-             cfg->exportfield=(float *)calloc(sizeof(float)*dimxyz,gpu[gpuid].maxgate*2);
-	 }
-     }
-     if(cfg->exportdetected==NULL)
-         cfg->exportdetected=(float*)malloc(detreclen*cfg->maxdetphoton*sizeof(float));
-     if(cfg->issaveseed && cfg->seeddata==NULL)
-         cfg->seeddata=malloc(cfg->maxdetphoton*sizeof(RandType)*RAND_BUF_LEN);
-     cfg->detectedcount=0;
-     cfg->his.detected=0;
-     cfg->his.respin=cfg->respin;
-     cfg->energytot=0.f;
-     cfg->energyabs=0.f;
-     cfg->energyesc=0.f;
-     cfg->runtime=0;
-}
+	{
+		if(cfg->exportfield==NULL){
+			if(cfg->seed==SEED_FROM_FILE && cfg->replaydet==-1){
+				cfg->exportfield=(float *)calloc(sizeof(float)*dimxyz,gpu[gpuid].maxgate*2*cfg->detnum);
+			}else{
+				cfg->exportfield=(float *)calloc(sizeof(float)*dimxyz,gpu[gpuid].maxgate*2);
+			}
+		}
+		if(cfg->exportdetected==NULL)
+			cfg->exportdetected=(float*)malloc(detreclen*cfg->maxdetphoton*sizeof(float));
+		if(cfg->issaveseed && cfg->seeddata==NULL)
+			cfg->seeddata=malloc(cfg->maxdetphoton*sizeof(RandType)*RAND_BUF_LEN);
+		cfg->detectedcount=0;
+		cfg->his.detected=0;
+		cfg->his.respin=cfg->respin;
+		cfg->energytot=0.f;
+		cfg->energyabs=0.f;
+		cfg->energyesc=0.f;
+		cfg->runtime=0;
+	}
 #pragma omp barrier
 
-     if(is2d){
-         float *vec=&(param.c0.x);
-         if(ABS(vec[is2d-1])>EPS)
-             mcx_error(-1,"input domain is 2D, the initial direction can not have non-zero value in the singular dimension",__FILE__,__LINE__);
-     }
-     if(!cfg->autopilot){
-	gpu[gpuid].autothread=cfg->nthread;
-	gpu[gpuid].autoblock=cfg->nblocksize;
-	gpu[gpuid].maxgate=cfg->maxgate;
-     }
-     if(gpu[gpuid].autothread%gpu[gpuid].autoblock)
-     	gpu[gpuid].autothread=(gpu[gpuid].autothread/gpu[gpuid].autoblock)*gpu[gpuid].autoblock;
+	if(is2d){
+		float *vec=&(param.c0.x);
+		if(ABS(vec[is2d-1])>EPS)
+			mcx_error(-1,"input domain is 2D, the initial direction can not have non-zero value in the singular dimension",__FILE__,__LINE__);
+	}
+	if(!cfg->autopilot){
+		gpu[gpuid].autothread=cfg->nthread;
+		gpu[gpuid].autoblock=cfg->nblocksize;
+		gpu[gpuid].maxgate=cfg->maxgate;
+	}
+	if(gpu[gpuid].autothread%gpu[gpuid].autoblock)
+		gpu[gpuid].autothread=(gpu[gpuid].autothread/gpu[gpuid].autoblock)*gpu[gpuid].autoblock;
 
-     param.maxgate=gpu[gpuid].maxgate;
+	param.maxgate=gpu[gpuid].maxgate;
 
-     if(ABS(cfg->respin)>1){
-         if(cfg->seed==SEED_FROM_FILE && cfg->replaydet==-1){
-             field=(float *)calloc(sizeof(float)*dimxyz,gpu[gpuid].maxgate*2*cfg->detnum);
-	 }else{
-             field=(float *)calloc(sizeof(float)*dimxyz,gpu[gpuid].maxgate*2);	 
-	 }
-     }else{
-         if(cfg->seed==SEED_FROM_FILE && cfg->replaydet==-1){
-             field=(float *)calloc(sizeof(float)*dimxyz,gpu[gpuid].maxgate*cfg->detnum); //the second half will be used to accumulate
-	 }else{
-             field=(float *)calloc(sizeof(float)*dimxyz,gpu[gpuid].maxgate); //the second half will be used to accumulate
-	 }
-     }
+	if(ABS(cfg->respin)>1){
+		if(cfg->seed==SEED_FROM_FILE && cfg->replaydet==-1){
+			field=(float *)calloc(sizeof(float)*dimxyz,gpu[gpuid].maxgate*2*cfg->detnum);
+		}else{
+			field=(float *)calloc(sizeof(float)*dimxyz,gpu[gpuid].maxgate*2);	 
+		}
+	}else{
+		if(cfg->seed==SEED_FROM_FILE && cfg->replaydet==-1){
+			field=(float *)calloc(sizeof(float)*dimxyz,gpu[gpuid].maxgate*cfg->detnum); //the second half will be used to accumulate
+		}else{
+			field=(float *)calloc(sizeof(float)*dimxyz,gpu[gpuid].maxgate); //the second half will be used to accumulate
+		}
+	}
 
 #pragma omp master
-{
-     fullload=0.f;
-     for(i=0;cfg->deviceid[i];i++)
-        fullload+=cfg->workload[i];
+	{
+		fullload=0.f;
+		for(i=0;cfg->deviceid[i];i++)
+			fullload+=cfg->workload[i];
 
-     if(fullload<EPS){
-        for(i=0;cfg->deviceid[i];i++)
-            cfg->workload[i]=gpu[cfg->deviceid[i]-1].core;
-     }
-}
+		if(fullload<EPS){
+			for(i=0;cfg->deviceid[i];i++)
+				cfg->workload[i]=gpu[cfg->deviceid[i]-1].core;
+		}
+	}
 #pragma omp barrier
 
-     fullload=0.f;
-     for(i=0;cfg->deviceid[i];i++)
-        if(cfg->workload[i]>0.f)
-            fullload+=cfg->workload[i];
-        else
-            mcx_error(-1,"workload was unspecified for an active device",__FILE__,__LINE__);
+	fullload=0.f;
+	for(i=0;cfg->deviceid[i];i++)
+		if(cfg->workload[i]>0.f)
+			fullload+=cfg->workload[i];
+		else
+			mcx_error(-1,"workload was unspecified for an active device",__FILE__,__LINE__);
 
-     gpuphoton=(double)cfg->nphoton*cfg->workload[threadid]/fullload;
+	gpuphoton=(double)cfg->nphoton*cfg->workload[threadid]/fullload;
 
-     if(gpuphoton==0)
-        return;
+	if(gpuphoton==0)
+		return;
 
-     if(cfg->respin>=1){
-         param.threadphoton=gpuphoton/gpu[gpuid].autothread;
-         param.oddphotons=gpuphoton-param.threadphoton*gpu[gpuid].autothread;
-     }else if(cfg->respin<0){
-         param.threadphoton=-gpuphoton/gpu[gpuid].autothread/cfg->respin;
-         param.oddphotons=-gpuphoton/cfg->respin-param.threadphoton*gpu[gpuid].autothread;     
-     }else{
-         mcx_error(-1,"respin number can not be 0, check your -r/--repeat input or cfg.respin value",__FILE__,__LINE__);
-     }
-     totalgates=(int)((cfg->tend-cfg->tstart)/cfg->tstep+0.5);
+	if(cfg->respin>=1){
+		param.threadphoton=gpuphoton/gpu[gpuid].autothread;
+		param.oddphotons=gpuphoton-param.threadphoton*gpu[gpuid].autothread;
+	}else if(cfg->respin<0){
+		param.threadphoton=-gpuphoton/gpu[gpuid].autothread/cfg->respin;
+		param.oddphotons=-gpuphoton/cfg->respin-param.threadphoton*gpu[gpuid].autothread;     
+	}else{
+		mcx_error(-1,"respin number can not be 0, check your -r/--repeat input or cfg.respin value",__FILE__,__LINE__);
+	}
+	totalgates=(int)((cfg->tend-cfg->tstart)/cfg->tstep+0.5);
 #pragma omp master
-     if(totalgates>gpu[gpuid].maxgate && cfg->isnormalized){
-         MCX_FPRINTF(stderr,"WARNING: GPU memory can not hold all time gates, disabling normalization to allow multiple runs\n");
-         cfg->isnormalized=0;
-     }
+	if(totalgates>gpu[gpuid].maxgate && cfg->isnormalized){
+		MCX_FPRINTF(stderr,"WARNING: GPU memory can not hold all time gates, disabling normalization to allow multiple runs\n");
+		cfg->isnormalized=0;
+	}
 #pragma omp barrier
 
-     if(cfg->seed==SEED_FROM_FILE && cfg->replaydet==-1)
-         fieldlen=dimxyz*gpu[gpuid].maxgate*cfg->detnum;
-     else
-         fieldlen=dimxyz*gpu[gpuid].maxgate;
+	if(cfg->seed==SEED_FROM_FILE && cfg->replaydet==-1)
+		fieldlen=dimxyz*gpu[gpuid].maxgate*cfg->detnum;
+	else
+		fieldlen=dimxyz*gpu[gpuid].maxgate;
 
-     mcgrid.x=gpu[gpuid].autothread/gpu[gpuid].autoblock;
-     mcblock.x=gpu[gpuid].autoblock;
+	mcgrid.x=gpu[gpuid].autothread/gpu[gpuid].autoblock;
+	mcblock.x=gpu[gpuid].autoblock;
 
-     clgrid.x=cfg->dim.x;
-     clgrid.y=cfg->dim.y;
-     clblock.x=cfg->dim.z;
+	clgrid.x=cfg->dim.x;
+	clgrid.y=cfg->dim.y;
+	clblock.x=cfg->dim.z;
 
-     if(cfg->debuglevel & MCX_DEBUG_RNG){
+	if(cfg->debuglevel & MCX_DEBUG_RNG){
 #pragma omp master
-{
-           param.twin0=cfg->tstart;
-           param.twin1=cfg->tend;
-           Pseed=(uint*)malloc(sizeof(RandType)*RAND_BUF_LEN);
-           for (i=0; i<(int)(((sizeof(RandType)*RAND_BUF_LEN)>>2)); i++){
-		Pseed[i]=((rand() << 16) | (rand() << 1) | (rand() >> 14));
-	   }
-           CUDA_ASSERT(cudaMalloc((void **) &gPseed, sizeof(RandType)*RAND_BUF_LEN));
-	   CUDA_ASSERT(cudaMemcpy(gPseed, Pseed, sizeof(RandType)*RAND_BUF_LEN,  cudaMemcpyHostToDevice));
-           CUDA_ASSERT(cudaMalloc((void **) &gfield, sizeof(float)*fieldlen));
-           CUDA_ASSERT(cudaMemset(gfield,0,sizeof(float)*fieldlen)); // cost about 1 ms
-           CUDA_ASSERT(cudaMemcpyToSymbol(gcfg,   &param, sizeof(MCXParam), 0, cudaMemcpyHostToDevice));
+		{
+			param.twin0=cfg->tstart;
+			param.twin1=cfg->tend;
+			Pseed=(uint*)malloc(sizeof(RandType)*RAND_BUF_LEN);
+			for (i=0; i<(int)(((sizeof(RandType)*RAND_BUF_LEN)>>2)); i++){
+				Pseed[i]=((rand() << 16) | (rand() << 1) | (rand() >> 14));
+			}
+			CUDA_ASSERT(cudaMalloc((void **) &gPseed, sizeof(RandType)*RAND_BUF_LEN));
+			CUDA_ASSERT(cudaMemcpy(gPseed, Pseed, sizeof(RandType)*RAND_BUF_LEN,  cudaMemcpyHostToDevice));
+			CUDA_ASSERT(cudaMalloc((void **) &gfield, sizeof(float)*fieldlen));
+			CUDA_ASSERT(cudaMemset(gfield,0,sizeof(float)*fieldlen)); // cost about 1 ms
+			CUDA_ASSERT(cudaMemcpyToSymbol(gcfg,   &param, sizeof(MCXParam), 0, cudaMemcpyHostToDevice));
 
-           tic=StartTimer();
-           MCX_FPRINTF(cfg->flog,"generating %lu random numbers ... \t",fieldlen); fflush(cfg->flog);
-           mcx_test_rng<<<1,1>>>(gfield,gPseed);
-           tic1=GetTimeMillis();
-           MCX_FPRINTF(cfg->flog,"kernel complete:  \t%d ms\nretrieving random numbers ... \t",tic1-tic);
-           CUDA_ASSERT(cudaGetLastError());
+			tic=StartTimer();
+			MCX_FPRINTF(cfg->flog,"generating %lu random numbers ... \t",fieldlen); fflush(cfg->flog);
+			mcx_test_rng<<<1,1>>>(gfield,gPseed);
+			tic1=GetTimeMillis();
+			MCX_FPRINTF(cfg->flog,"kernel complete:  \t%d ms\nretrieving random numbers ... \t",tic1-tic);
+			CUDA_ASSERT(cudaGetLastError());
 
-           CUDA_ASSERT(cudaMemcpy(field, gfield,sizeof(float)*dimxyz*gpu[gpuid].maxgate,cudaMemcpyDeviceToHost));
-           MCX_FPRINTF(cfg->flog,"transfer complete:\t%d ms\n\n",GetTimeMillis()-tic);  fflush(cfg->flog);
-	   if(cfg->exportfield)
-	       memcpy(cfg->exportfield,field,fieldlen*sizeof(float));
-	   if(cfg->issave2pt && cfg->parentid==mpStandalone){
-               MCX_FPRINTF(cfg->flog,"saving data to file ...\t");
-	       mcx_savedata(field,fieldlen,cfg);
-               MCX_FPRINTF(cfg->flog,"saving data complete : %d ms\n\n",GetTimeMillis()-tic);
-               fflush(cfg->flog);
-           }
-	   CUDA_ASSERT(cudaFree(gfield));
-	   CUDA_ASSERT(cudaFree(gPseed));
-	   free(field);
-	   free(Pseed);
+			CUDA_ASSERT(cudaMemcpy(field, gfield,sizeof(float)*dimxyz*gpu[gpuid].maxgate,cudaMemcpyDeviceToHost));
+			MCX_FPRINTF(cfg->flog,"transfer complete:\t%d ms\n\n",GetTimeMillis()-tic);  fflush(cfg->flog);
+			if(cfg->exportfield)
+				memcpy(cfg->exportfield,field,fieldlen*sizeof(float));
+			if(cfg->issave2pt && cfg->parentid==mpStandalone){
+				MCX_FPRINTF(cfg->flog,"saving data to file ...\t");
+				mcx_savedata(field,fieldlen,cfg);
+				MCX_FPRINTF(cfg->flog,"saving data complete : %d ms\n\n",GetTimeMillis()-tic);
+				fflush(cfg->flog);
+			}
+			CUDA_ASSERT(cudaFree(gfield));
+			CUDA_ASSERT(cudaFree(gPseed));
+			free(field);
+			free(Pseed);
 
-           CUDA_ASSERT(cudaDeviceReset());
-}
+			CUDA_ASSERT(cudaDeviceReset());
+		}
 #pragma omp barrier
 
-	   return;
-     }
+		return;
+	}
 
-     Ppos=(float4*)malloc(sizeof(float4)*gpu[gpuid].autothread);
-     Pdir=(float4*)malloc(sizeof(float4)*gpu[gpuid].autothread);
-     Plen=(float4*)malloc(sizeof(float4)*gpu[gpuid].autothread);
-     Plen0=(float4*)malloc(sizeof(float4)*gpu[gpuid].autothread);
-     energy=(float*)calloc(gpu[gpuid].autothread<<1,sizeof(float));
-     Pdet=(float*)calloc(cfg->maxdetphoton,sizeof(float)*(detreclen));
-     if(cfg->seed!=SEED_FROM_FILE)
-         Pseed=(uint*)malloc(sizeof(RandType)*gpu[gpuid].autothread*RAND_BUF_LEN);
-     else
-         Pseed=(uint*)malloc(sizeof(RandType)*cfg->nphoton*RAND_BUF_LEN);
+	Ppos=(float4*)malloc(sizeof(float4)*gpu[gpuid].autothread);
+	Pdir=(float4*)malloc(sizeof(float4)*gpu[gpuid].autothread);
+	Plen=(float4*)malloc(sizeof(float4)*gpu[gpuid].autothread);
+	Plen0=(float4*)malloc(sizeof(float4)*gpu[gpuid].autothread);
+	energy=(float*)calloc(gpu[gpuid].autothread<<1,sizeof(float));
+	Pdet=(float*)calloc(cfg->maxdetphoton,sizeof(float)*(detreclen));
+	if(cfg->seed!=SEED_FROM_FILE)
+		Pseed=(uint*)malloc(sizeof(RandType)*gpu[gpuid].autothread*RAND_BUF_LEN);
+	else
+		Pseed=(uint*)malloc(sizeof(RandType)*cfg->nphoton*RAND_BUF_LEN);
 
-     CUDA_ASSERT(cudaMalloc((void **) &gmedia, sizeof(uint)*(dimxyz)));
-     //CUDA_ASSERT(cudaBindTexture(0, texmedia, gmedia));
-     CUDA_ASSERT(cudaMalloc((void **) &gfield, sizeof(float)*fieldlen*2));
-     CUDA_ASSERT(cudaMalloc((void **) &gPpos, sizeof(float4)*gpu[gpuid].autothread));
-     CUDA_ASSERT(cudaMalloc((void **) &gPdir, sizeof(float4)*gpu[gpuid].autothread));
-     CUDA_ASSERT(cudaMalloc((void **) &gPlen, sizeof(float4)*gpu[gpuid].autothread));
-     CUDA_ASSERT(cudaMalloc((void **) &gPdet, sizeof(float)*cfg->maxdetphoton*(detreclen)));
-     CUDA_ASSERT(cudaMalloc((void **) &gdetected, sizeof(uint)));
-     CUDA_ASSERT(cudaMalloc((void **) &genergy, sizeof(float)*(gpu[gpuid].autothread<<1)));
+	CUDA_ASSERT(cudaMalloc((void **) &gmedia, sizeof(uint)*(dimxyz)));
+	//CUDA_ASSERT(cudaBindTexture(0, texmedia, gmedia));
+	CUDA_ASSERT(cudaMalloc((void **) &gfield, sizeof(float)*fieldlen*2));
+	CUDA_ASSERT(cudaMalloc((void **) &gPpos, sizeof(float4)*gpu[gpuid].autothread));
+	CUDA_ASSERT(cudaMalloc((void **) &gPdir, sizeof(float4)*gpu[gpuid].autothread));
+	CUDA_ASSERT(cudaMalloc((void **) &gPlen, sizeof(float4)*gpu[gpuid].autothread));
+	CUDA_ASSERT(cudaMalloc((void **) &gPdet, sizeof(float)*cfg->maxdetphoton*(detreclen)));
+	CUDA_ASSERT(cudaMalloc((void **) &gdetected, sizeof(uint)));
+	CUDA_ASSERT(cudaMalloc((void **) &genergy, sizeof(float)*(gpu[gpuid].autothread<<1)));
 
-     CUDA_ASSERT(cudaHostAlloc((void **)&progress, sizeof(int), cudaHostAllocMapped));
-     CUDA_ASSERT(cudaHostGetDevicePointer((int **)&gprogress, (int *)progress, 0));
-     *progress = 0;
+	CUDA_ASSERT(cudaHostAlloc((void **)&progress, sizeof(int), cudaHostAllocMapped));
+	CUDA_ASSERT(cudaHostGetDevicePointer((int **)&gprogress, (int *)progress, 0));
+	*progress = 0;
 
-     if(cfg->debuglevel & MCX_DEBUG_MOVE){
-         CUDA_ASSERT(cudaMalloc((void **) &gdebugdata, sizeof(float)*(debuglen*cfg->maxjumpdebug)));
-     }
-     if(cfg->issaveseed){
-         seeddata=(RandType*)malloc(sizeof(RandType)*cfg->maxdetphoton*RAND_BUF_LEN);
-	 CUDA_ASSERT(cudaMalloc((void **) &gseeddata, sizeof(RandType)*cfg->maxdetphoton*RAND_BUF_LEN));
-     }
-     if(cfg->seed==SEED_FROM_FILE){
-         CUDA_ASSERT(cudaMalloc((void **) &gPseed, sizeof(RandType)*cfg->nphoton*RAND_BUF_LEN));
-	 CUDA_ASSERT(cudaMemcpy(gPseed,cfg->replay.seed,sizeof(RandType)*cfg->nphoton*RAND_BUF_LEN, cudaMemcpyHostToDevice));
-	 if(cfg->replay.weight){
-	     CUDA_ASSERT(cudaMalloc((void **) &greplayw, sizeof(float)*cfg->nphoton));
-	     CUDA_ASSERT(cudaMemcpy(greplayw,cfg->replay.weight,sizeof(float)*cfg->nphoton, cudaMemcpyHostToDevice));
-	 }
-         if(cfg->replay.tof){
-	     CUDA_ASSERT(cudaMalloc((void **) &greplaytof, sizeof(float)*cfg->nphoton));
-	     CUDA_ASSERT(cudaMemcpy(greplaytof,cfg->replay.tof,sizeof(float)*cfg->nphoton, cudaMemcpyHostToDevice));
-	 }
-         if(cfg->replay.detid){
-	     CUDA_ASSERT(cudaMalloc((void **) &greplaydetid, sizeof(int)*cfg->nphoton));
-	     CUDA_ASSERT(cudaMemcpy(greplaydetid,cfg->replay.detid,sizeof(int)*cfg->nphoton, cudaMemcpyHostToDevice));
-	 }
-     }else
-         CUDA_ASSERT(cudaMalloc((void **) &gPseed, sizeof(RandType)*gpu[gpuid].autothread*RAND_BUF_LEN));
+	if(cfg->debuglevel & MCX_DEBUG_MOVE){
+		CUDA_ASSERT(cudaMalloc((void **) &gdebugdata, sizeof(float)*(debuglen*cfg->maxjumpdebug)));
+	}
+	if(cfg->issaveseed){
+		seeddata=(RandType*)malloc(sizeof(RandType)*cfg->maxdetphoton*RAND_BUF_LEN);
+		CUDA_ASSERT(cudaMalloc((void **) &gseeddata, sizeof(RandType)*cfg->maxdetphoton*RAND_BUF_LEN));
+	}
+	if(cfg->seed==SEED_FROM_FILE){
+		CUDA_ASSERT(cudaMalloc((void **) &gPseed, sizeof(RandType)*cfg->nphoton*RAND_BUF_LEN));
+		CUDA_ASSERT(cudaMemcpy(gPseed,cfg->replay.seed,sizeof(RandType)*cfg->nphoton*RAND_BUF_LEN, cudaMemcpyHostToDevice));
+		if(cfg->replay.weight){
+			CUDA_ASSERT(cudaMalloc((void **) &greplayw, sizeof(float)*cfg->nphoton));
+			CUDA_ASSERT(cudaMemcpy(greplayw,cfg->replay.weight,sizeof(float)*cfg->nphoton, cudaMemcpyHostToDevice));
+		}
+		if(cfg->replay.tof){
+			CUDA_ASSERT(cudaMalloc((void **) &greplaytof, sizeof(float)*cfg->nphoton));
+			CUDA_ASSERT(cudaMemcpy(greplaytof,cfg->replay.tof,sizeof(float)*cfg->nphoton, cudaMemcpyHostToDevice));
+		}
+		if(cfg->replay.detid){
+			CUDA_ASSERT(cudaMalloc((void **) &greplaydetid, sizeof(int)*cfg->nphoton));
+			CUDA_ASSERT(cudaMemcpy(greplaydetid,cfg->replay.detid,sizeof(int)*cfg->nphoton, cudaMemcpyHostToDevice));
+		}
+	}else
+		CUDA_ASSERT(cudaMalloc((void **) &gPseed, sizeof(RandType)*gpu[gpuid].autothread*RAND_BUF_LEN));
 
-     if(cfg->srctype==MCX_SRC_PATTERN)
-         CUDA_ASSERT(cudaMalloc((void **) &gsrcpattern, sizeof(float)*(int)(cfg->srcparam1.w*cfg->srcparam2.w)));
-     else if(cfg->srctype==MCX_SRC_PATTERN3D)
-         CUDA_ASSERT(cudaMalloc((void **) &gsrcpattern, sizeof(float)*(int)(cfg->srcparam1.x*cfg->srcparam1.y*cfg->srcparam1.z)));
-	 
+	if(cfg->srctype==MCX_SRC_PATTERN)
+		CUDA_ASSERT(cudaMalloc((void **) &gsrcpattern, sizeof(float)*(int)(cfg->srcparam1.w*cfg->srcparam2.w)));
+	else if(cfg->srctype==MCX_SRC_PATTERN3D)
+		CUDA_ASSERT(cudaMalloc((void **) &gsrcpattern, sizeof(float)*(int)(cfg->srcparam1.x*cfg->srcparam1.y*cfg->srcparam1.z)));
+
 #ifndef SAVE_DETECTORS
 #pragma omp master
-     if(cfg->issavedet){
-           MCX_FPRINTF(stderr,"WARNING: this MCX binary can not save partial path, please use mcx_det or mcx_det_cached\n");
-           cfg->issavedet=0;
-     }
+	if(cfg->issavedet){
+		MCX_FPRINTF(stderr,"WARNING: this MCX binary can not save partial path, please use mcx_det or mcx_det_cached\n");
+		cfg->issavedet=0;
+	}
 #pragma omp barrier
 #endif
 
-     /*volume is assumbed to be col-major*/
-     cachebox.x=(cp1.x-cp0.x+1);
-     cachebox.y=(cp1.y-cp0.y+1)*(cp1.x-cp0.x+1);
-     dimlen.x=cfg->dim.x;
-     dimlen.y=cfg->dim.y*cfg->dim.x;
+	/*volume is assumbed to be col-major*/
+	cachebox.x=(cp1.x-cp0.x+1);
+	cachebox.y=(cp1.y-cp0.y+1)*(cp1.x-cp0.x+1);
+	dimlen.x=cfg->dim.x;
+	dimlen.y=cfg->dim.y*cfg->dim.x;
 
-     dimlen.z=cfg->dim.x*cfg->dim.y*cfg->dim.z;
-     dimlen.w=fieldlen;
+	dimlen.z=cfg->dim.x*cfg->dim.y*cfg->dim.z;
+	dimlen.w=fieldlen;
 
-     param.dimlen=dimlen;
-     param.cachebox=cachebox;
-     if(p0.x<0.f || p0.y<0.f || p0.z<0.f || p0.x>=cfg->dim.x || p0.y>=cfg->dim.y || p0.z>=cfg->dim.z){
-         param.idx1dorig=0;
-         param.mediaidorig=0;
-     }else{
-         param.idx1dorig=(int(floorf(p0.z))*dimlen.y+int(floorf(p0.y))*dimlen.x+int(floorf(p0.x)));
-         param.mediaidorig=(cfg->vol[param.idx1dorig] & MED_MASK);
-     }
+	param.dimlen=dimlen;
+	param.cachebox=cachebox;
+	if(p0.x<0.f || p0.y<0.f || p0.z<0.f || p0.x>=cfg->dim.x || p0.y>=cfg->dim.y || p0.z>=cfg->dim.z){
+		param.idx1dorig=0;
+		param.mediaidorig=0;
+	}else{
+		param.idx1dorig=(int(floorf(p0.z))*dimlen.y+int(floorf(p0.y))*dimlen.x+int(floorf(p0.x)));
+		param.mediaidorig=(cfg->vol[param.idx1dorig] & MED_MASK);
+	}
 
-     Vvox=cfg->steps.x*cfg->steps.y*cfg->steps.z; /*Vvox: voxel volume in mm^3*/
+	Vvox=cfg->steps.x*cfg->steps.y*cfg->steps.z; /*Vvox: voxel volume in mm^3*/
 
-     if(cfg->seed>0)
-     	srand(cfg->seed+threadid);
-     else
-        srand(time(0));
+	if(cfg->seed>0)
+		srand(cfg->seed+threadid);
+	else
+		srand(time(0));
 
-     for (i=0; i<gpu[gpuid].autothread; i++) {
-	   Ppos[i]=p0;  // initial position
-           Pdir[i]=c0;
-           Plen[i]=float4(0.f,0.f,param.minaccumtime,0.f);
-     }
-     tic=StartTimer();
+	for (i=0; i<gpu[gpuid].autothread; i++) {
+		Ppos[i]=p0;  // initial position
+		Pdir[i]=c0;
+		Plen[i]=float4(0.f,0.f,param.minaccumtime,0.f);
+	}
+	tic=StartTimer();
 #pragma omp master
-{
-     mcx_printheader(cfg);
+	{
+		mcx_printheader(cfg);
 
 #ifdef MCX_TARGET_NAME
-     MCX_FPRINTF(cfg->flog,"- variant name: [%s] compiled for GPU Capability [%d] with CUDA [%d]\n",
-         "Fermi",MCX_CUDA_ARCH,CUDART_VERSION);
+		MCX_FPRINTF(cfg->flog,"- variant name: [%s] compiled for GPU Capability [%d] with CUDA [%d]\n",
+				"Fermi",MCX_CUDA_ARCH,CUDART_VERSION);
 #else
-     MCX_FPRINTF(cfg->flog,"- code name: [Vanilla MCX] compiled for GPU Capacity [%d] with CUDA [%d]\n",
-         MCX_CUDA_ARCH,CUDART_VERSION);
+		MCX_FPRINTF(cfg->flog,"- code name: [Vanilla MCX] compiled for GPU Capacity [%d] with CUDA [%d]\n",
+				MCX_CUDA_ARCH,CUDART_VERSION);
 #endif
-     MCX_FPRINTF(cfg->flog,"- compiled with: RNG [%s] with Seed Length [%d]\n",MCX_RNG_NAME,(int)((sizeof(RandType)*RAND_BUF_LEN)>>2));
+		MCX_FPRINTF(cfg->flog,"- compiled with: RNG [%s] with Seed Length [%d]\n",MCX_RNG_NAME,(int)((sizeof(RandType)*RAND_BUF_LEN)>>2));
 #ifdef SAVE_DETECTORS
-     MCX_FPRINTF(cfg->flog,"- this version CAN save photons at the detectors\n\n");
+		MCX_FPRINTF(cfg->flog,"- this version CAN save photons at the detectors\n\n");
 #else
-     MCX_FPRINTF(cfg->flog,"- this version CAN NOT save photons at the detectors\n\n");
+		MCX_FPRINTF(cfg->flog,"- this version CAN NOT save photons at the detectors\n\n");
 #endif
-     fflush(cfg->flog);
-}
+		fflush(cfg->flog);
+	}
 #pragma omp barrier
 
-     MCX_FPRINTF(cfg->flog,"\nGPU=%d (%s) threadph=%d extra=%d np=%ld nthread=%d maxgate=%d repetition=%d\n",gpuid+1,gpu[gpuid].name,param.threadphoton,param.oddphotons,
-           gpuphoton,gpu[gpuid].autothread,gpu[gpuid].maxgate,ABS(cfg->respin));
-     MCX_FPRINTF(cfg->flog,"initializing streams ...\t");
-     fflush(cfg->flog);
+	MCX_FPRINTF(cfg->flog,"\nGPU=%d (%s) threadph=%d extra=%d np=%ld nthread=%d maxgate=%d repetition=%d\n",gpuid+1,gpu[gpuid].name,param.threadphoton,param.oddphotons,
+			gpuphoton,gpu[gpuid].autothread,gpu[gpuid].maxgate,ABS(cfg->respin));
+	MCX_FPRINTF(cfg->flog,"initializing streams ...\t");
+	fflush(cfg->flog);
 
-     mcx_flush(cfg);
+	mcx_flush(cfg);
 
-     CUDA_ASSERT(cudaMemcpy(gmedia, media, sizeof(uint)*dimxyz, cudaMemcpyHostToDevice));
-     CUDA_ASSERT(cudaMemcpy(genergy,energy,sizeof(float) *(gpu[gpuid].autothread<<1), cudaMemcpyHostToDevice));
-     if(cfg->srcpattern)
-        if(cfg->srctype==MCX_SRC_PATTERN)
-           CUDA_ASSERT(cudaMemcpy(gsrcpattern,cfg->srcpattern,sizeof(float)*(int)(cfg->srcparam1.w*cfg->srcparam2.w), cudaMemcpyHostToDevice));
-	else if(cfg->srctype==MCX_SRC_PATTERN3D)
-	   CUDA_ASSERT(cudaMemcpy(gsrcpattern,cfg->srcpattern,sizeof(float)*(int)(cfg->srcparam1.x*cfg->srcparam1.y*cfg->srcparam1.z), cudaMemcpyHostToDevice));
-     
+	CUDA_ASSERT(cudaMemcpy(gmedia, media, sizeof(uint)*dimxyz, cudaMemcpyHostToDevice));
+	CUDA_ASSERT(cudaMemcpy(genergy,energy,sizeof(float) *(gpu[gpuid].autothread<<1), cudaMemcpyHostToDevice));
+	if(cfg->srcpattern)
+		if(cfg->srctype==MCX_SRC_PATTERN)
+			CUDA_ASSERT(cudaMemcpy(gsrcpattern,cfg->srcpattern,sizeof(float)*(int)(cfg->srcparam1.w*cfg->srcparam2.w), cudaMemcpyHostToDevice));
+		else if(cfg->srctype==MCX_SRC_PATTERN3D)
+			CUDA_ASSERT(cudaMemcpy(gsrcpattern,cfg->srcpattern,sizeof(float)*(int)(cfg->srcparam1.x*cfg->srcparam1.y*cfg->srcparam1.z), cudaMemcpyHostToDevice));
 
-     CUDA_ASSERT(cudaMemcpyToSymbol(gproperty, cfg->prop,  cfg->medianum*sizeof(Medium), 0, cudaMemcpyHostToDevice));
-     CUDA_ASSERT(cudaMemcpyToSymbol(gproperty, cfg->detpos,  cfg->detnum*sizeof(float4), cfg->medianum*sizeof(Medium), cudaMemcpyHostToDevice));
 
-     MCX_FPRINTF(cfg->flog,"init complete : %d ms\n",GetTimeMillis()-tic);
+	CUDA_ASSERT(cudaMemcpyToSymbol(gproperty, cfg->prop,  cfg->medianum*sizeof(Medium), 0, cudaMemcpyHostToDevice));
+	CUDA_ASSERT(cudaMemcpyToSymbol(gproperty, cfg->detpos,  cfg->detnum*sizeof(float4), cfg->medianum*sizeof(Medium), cudaMemcpyHostToDevice));
 
-     /*
-         if one has to simulate a lot of time gates, using the GPU global memory
-	 requires extra caution. If the total global memory is bigger than the total
-	 memory to save all the snapshots, i.e. size(field)*(tend-tstart)/tstep, one
-	 simply sets gpu[gpuid].maxgate to the total gate number; this will run GPU kernel
-	 once. If the required memory is bigger than the video memory, set gpu[gpuid].maxgate
-	 to a number which fits, and the snapshot will be saved with an increment of 
-	 gpu[gpuid].maxgate snapshots. In this case, the later simulations will restart from
-	 photon launching and exhibit redundancies.
+	MCX_FPRINTF(cfg->flog,"init complete : %d ms\n",GetTimeMillis()-tic);
 
-	 The calculation of the energy conservation will only reflect the last simulation.
-     */
-     sharedbuf=gpu[gpuid].autoblock*(sizeof(RandType)*RAND_BUF_LEN+sizeof(MCXdir));
+	/*
+	   if one has to simulate a lot of time gates, using the GPU global memory
+	   requires extra caution. If the total global memory is bigger than the total
+	   memory to save all the snapshots, i.e. size(field)*(tend-tstart)/tstep, one
+	   simply sets gpu[gpuid].maxgate to the total gate number; this will run GPU kernel
+	   once. If the required memory is bigger than the video memory, set gpu[gpuid].maxgate
+	   to a number which fits, and the snapshot will be saved with an increment of 
+	   gpu[gpuid].maxgate snapshots. In this case, the later simulations will restart from
+	   photon launching and exhibit redundancies.
+
+	   The calculation of the energy conservation will only reflect the last simulation.
+	   */
+	sharedbuf=gpu[gpuid].autoblock*(sizeof(RandType)*RAND_BUF_LEN+sizeof(MCXdir));
 #ifdef  USE_CACHEBOX
-     if(cfg->sradius>EPS || ABS(cfg->sradius+1.f)<EPS)
-        sharedbuf+=sizeof(float)*((cp1.x-cp0.x+1)*(cp1.y-cp0.y+1)*(cp1.z-cp0.z+1));
+	if(cfg->sradius>EPS || ABS(cfg->sradius+1.f)<EPS)
+		sharedbuf+=sizeof(float)*((cp1.x-cp0.x+1)*(cp1.y-cp0.y+1)*(cp1.z-cp0.z+1));
 #endif
-     if(cfg->issavedet)
-        sharedbuf+=gpu[gpuid].autoblock*sizeof(float)*(cfg->medianum-1);
-     if(cfg->ismomentum)
-        sharedbuf+=gpu[gpuid].autoblock*sizeof(float)*(cfg->medianum-1);
+	if(cfg->issavedet)
+		sharedbuf+=gpu[gpuid].autoblock*sizeof(float)*(cfg->medianum-1);
+	if(cfg->ismomentum)
+		sharedbuf+=gpu[gpuid].autoblock*sizeof(float)*(cfg->medianum-1);
 #ifdef USE_MT_RAND
-     sharedbuf+=(N+2)*sizeof(uint); // MT RNG uses N+2 uint in the shared memory
+	sharedbuf+=(N+2)*sizeof(uint); // MT RNG uses N+2 uint in the shared memory
 #endif
 
-     MCX_FPRINTF(cfg->flog,"requesting %d bytes of shared memory\n",sharedbuf);
+	MCX_FPRINTF(cfg->flog,"requesting %d bytes of shared memory\n",sharedbuf);
 
-     //simulate for all time-gates in maxgate groups per run
-     for(timegate=0;timegate<totalgates;timegate+=gpu[gpuid].maxgate){
+	//simulate for all time-gates in maxgate groups per run
+	for(timegate=0;timegate<totalgates;timegate+=gpu[gpuid].maxgate){
 
-       param.twin0=cfg->tstart+cfg->tstep*timegate;
-       param.twin1=param.twin0+cfg->tstep*gpu[gpuid].maxgate;
-       CUDA_ASSERT(cudaMemcpyToSymbol(gcfg,   &param,     sizeof(MCXParam), 0, cudaMemcpyHostToDevice));
+		param.twin0=cfg->tstart+cfg->tstep*timegate;
+		param.twin1=param.twin0+cfg->tstep*gpu[gpuid].maxgate;
+		CUDA_ASSERT(cudaMemcpyToSymbol(gcfg,   &param,     sizeof(MCXParam), 0, cudaMemcpyHostToDevice));
 
-       MCX_FPRINTF(cfg->flog,"lauching MCX simulation for time window [%.2ens %.2ens] ...\n"
-           ,param.twin0*1e9,param.twin1*1e9);
+		MCX_FPRINTF(cfg->flog,"lauching MCX simulation for time window [%.2ens %.2ens] ...\n"
+				,param.twin0*1e9,param.twin1*1e9);
 
-       //total number of repetition for the simulations, results will be accumulated to field
-       for(iter=0;iter<ABS(cfg->respin);iter++){
-           CUDA_ASSERT(cudaMemset(gfield,0,sizeof(float)*fieldlen*2)); // cost about 1 ms
-           CUDA_ASSERT(cudaMemset(gPdet,0,sizeof(float)*cfg->maxdetphoton*(detreclen)));
-           if(cfg->issaveseed)
-	       CUDA_ASSERT(cudaMemset(gseeddata,0,sizeof(RandType)*cfg->maxdetphoton*RAND_BUF_LEN));
-           CUDA_ASSERT(cudaMemset(gdetected,0,sizeof(float)));
-           if(cfg->debuglevel & MCX_DEBUG_MOVE){
-	       uint jumpcount=0;
-               CUDA_ASSERT(cudaMemcpyToSymbol(gjumpdebug, &jumpcount, sizeof(uint), 0, cudaMemcpyHostToDevice));
-           }
- 	   CUDA_ASSERT(cudaMemcpy(gPpos,  Ppos,  sizeof(float4)*gpu[gpuid].autothread,  cudaMemcpyHostToDevice));
-	   CUDA_ASSERT(cudaMemcpy(gPdir,  Pdir,  sizeof(float4)*gpu[gpuid].autothread,  cudaMemcpyHostToDevice));
-	   CUDA_ASSERT(cudaMemcpy(gPlen,  Plen,  sizeof(float4)*gpu[gpuid].autothread,  cudaMemcpyHostToDevice));
+		//total number of repetition for the simulations, results will be accumulated to field
+		for(iter=0;iter<ABS(cfg->respin);iter++){
+			CUDA_ASSERT(cudaMemset(gfield,0,sizeof(float)*fieldlen*2)); // cost about 1 ms
+			CUDA_ASSERT(cudaMemset(gPdet,0,sizeof(float)*cfg->maxdetphoton*(detreclen)));
+			if(cfg->issaveseed)
+				CUDA_ASSERT(cudaMemset(gseeddata,0,sizeof(RandType)*cfg->maxdetphoton*RAND_BUF_LEN));
+			CUDA_ASSERT(cudaMemset(gdetected,0,sizeof(float)));
+			if(cfg->debuglevel & MCX_DEBUG_MOVE){
+				uint jumpcount=0;
+				CUDA_ASSERT(cudaMemcpyToSymbol(gjumpdebug, &jumpcount, sizeof(uint), 0, cudaMemcpyHostToDevice));
+			}
+			CUDA_ASSERT(cudaMemcpy(gPpos,  Ppos,  sizeof(float4)*gpu[gpuid].autothread,  cudaMemcpyHostToDevice));
+			CUDA_ASSERT(cudaMemcpy(gPdir,  Pdir,  sizeof(float4)*gpu[gpuid].autothread,  cudaMemcpyHostToDevice));
+			CUDA_ASSERT(cudaMemcpy(gPlen,  Plen,  sizeof(float4)*gpu[gpuid].autothread,  cudaMemcpyHostToDevice));
 
-           if(cfg->seed!=SEED_FROM_FILE){
-             for (i=0; i<gpu[gpuid].autothread*((int)(sizeof(RandType)*RAND_BUF_LEN)>>2); i++)
-               Pseed[i]=((rand() << 16) | (rand() << 1) | (rand() >> 14));
-	     CUDA_ASSERT(cudaMemcpy(gPseed, Pseed, sizeof(RandType)*gpu[gpuid].autothread*RAND_BUF_LEN,  cudaMemcpyHostToDevice));
-           }
-           tic0=GetTimeMillis();
+			if(cfg->seed!=SEED_FROM_FILE){
+				for (i=0; i<gpu[gpuid].autothread*((int)(sizeof(RandType)*RAND_BUF_LEN)>>2); i++)
+					Pseed[i]=((rand() << 16) | (rand() << 1) | (rand() >> 14));
+				CUDA_ASSERT(cudaMemcpy(gPseed, Pseed, sizeof(RandType)*gpu[gpuid].autothread*RAND_BUF_LEN,  cudaMemcpyHostToDevice));
+			}
+			tic0=GetTimeMillis();
 #ifndef WIN32
 #pragma omp master
-{
-           if(cfg->debuglevel & MCX_DEBUG_PROGRESS)
-               CUDA_ASSERT(cudaEventCreate(&updateprogress));
-}
+			{
+				if(cfg->debuglevel & MCX_DEBUG_PROGRESS)
+					CUDA_ASSERT(cudaEventCreate(&updateprogress));
+			}
 #endif
-           MCX_FPRINTF(cfg->flog,"simulation run#%2d ... \n",iter+1); fflush(cfg->flog);
-           mcx_flush(cfg);
+			MCX_FPRINTF(cfg->flog,"simulation run#%2d ... \n",iter+1); fflush(cfg->flog);
+			mcx_flush(cfg);
 
-	   switch(cfg->srctype) {
-		case(MCX_SRC_PENCIL): mcx_main_loop<MCX_SRC_PENCIL> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_ISOTROPIC): mcx_main_loop<MCX_SRC_ISOTROPIC> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_CONE): mcx_main_loop<MCX_SRC_CONE> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_GAUSSIAN): mcx_main_loop<MCX_SRC_GAUSSIAN> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_PLANAR): mcx_main_loop<MCX_SRC_PLANAR> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_PATTERN): mcx_main_loop<MCX_SRC_PATTERN> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_FOURIER): mcx_main_loop<MCX_SRC_FOURIER> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_ARCSINE): mcx_main_loop<MCX_SRC_ARCSINE> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_DISK): mcx_main_loop<MCX_SRC_DISK> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_FOURIERX): mcx_main_loop<MCX_SRC_FOURIERX> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_FOURIERX2D): mcx_main_loop<MCX_SRC_FOURIERX2D> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_ZGAUSSIAN): mcx_main_loop<MCX_SRC_ZGAUSSIAN> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_LINE): mcx_main_loop<MCX_SRC_LINE> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_SLIT): mcx_main_loop<MCX_SRC_SLIT> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_PENCILARRAY): mcx_main_loop<MCX_SRC_PENCILARRAY> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_PATTERN3D): mcx_main_loop<MCX_SRC_PATTERN3D> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-	   }
+			switch(cfg->srctype) {
+				case(MCX_SRC_PENCIL): mcx_main_loop<MCX_SRC_PENCIL> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_ISOTROPIC): mcx_main_loop<MCX_SRC_ISOTROPIC> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_CONE): mcx_main_loop<MCX_SRC_CONE> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_GAUSSIAN): mcx_main_loop<MCX_SRC_GAUSSIAN> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_PLANAR): mcx_main_loop<MCX_SRC_PLANAR> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_PATTERN): mcx_main_loop<MCX_SRC_PATTERN> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_FOURIER): mcx_main_loop<MCX_SRC_FOURIER> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_ARCSINE): mcx_main_loop<MCX_SRC_ARCSINE> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_DISK): mcx_main_loop<MCX_SRC_DISK> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_FOURIERX): mcx_main_loop<MCX_SRC_FOURIERX> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_FOURIERX2D): mcx_main_loop<MCX_SRC_FOURIERX2D> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_ZGAUSSIAN): mcx_main_loop<MCX_SRC_ZGAUSSIAN> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_LINE): mcx_main_loop<MCX_SRC_LINE> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_SLIT): mcx_main_loop<MCX_SRC_SLIT> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_PENCILARRAY): mcx_main_loop<MCX_SRC_PENCILARRAY> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+				case(MCX_SRC_PATTERN3D): mcx_main_loop<MCX_SRC_PATTERN3D> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
+			}
 
 #pragma omp master
-{
-           if((param.debuglevel & MCX_DEBUG_PROGRESS)){
-	     int p0 = 0, ndone=-1;
+			{
+				if((param.debuglevel & MCX_DEBUG_PROGRESS)){
+					int p0 = 0, ndone=-1;
 #ifndef WIN32
-             CUDA_ASSERT(cudaEventRecord(updateprogress));
+					CUDA_ASSERT(cudaEventRecord(updateprogress));
 #endif
-	     mcx_progressbar(-0.f,cfg);
-	     do{
+					mcx_progressbar(-0.f,cfg);
+					do{
 #ifndef WIN32
-               cudaEventQuery(updateprogress);
+						cudaEventQuery(updateprogress);
 #endif
-               ndone = *progress;
-	       if (ndone > p0){
-		  mcx_progressbar(ndone/(param.threadphoton*1.45f),cfg);
-		  p0 = ndone;
-	       }
-               sleep_ms(100);
-	     }while (p0 < (param.threadphoton*1.45f));
-             mcx_progressbar(1.0f,cfg);
-             MCX_FPRINTF(cfg->flog,"\n");
-             *progress=0;
-           }
-}
-           CUDA_ASSERT(cudaThreadSynchronize());
-	   CUDA_ASSERT(cudaMemcpy(&detected, gdetected,sizeof(uint),cudaMemcpyDeviceToHost));
-           tic1=GetTimeMillis();
-	   toc+=tic1-tic0;
-           MCX_FPRINTF(cfg->flog,"kernel complete:  \t%d ms\nretrieving fields ... \t",tic1-tic);
-           CUDA_ASSERT(cudaGetLastError());
+						ndone = *progress;
+						if (ndone > p0){
+							mcx_progressbar(ndone/(param.threadphoton*1.45f),cfg);
+							p0 = ndone;
+						}
+						sleep_ms(100);
+					}while (p0 < (param.threadphoton*1.45f));
+					mcx_progressbar(1.0f,cfg);
+					MCX_FPRINTF(cfg->flog,"\n");
+					*progress=0;
+				}
+			}
+			CUDA_ASSERT(cudaThreadSynchronize());
+			CUDA_ASSERT(cudaMemcpy(&detected, gdetected,sizeof(uint),cudaMemcpyDeviceToHost));
+			tic1=GetTimeMillis();
+			toc+=tic1-tic0;
+			MCX_FPRINTF(cfg->flog,"kernel complete:  \t%d ms\nretrieving fields ... \t",tic1-tic);
+			CUDA_ASSERT(cudaGetLastError());
 
-           CUDA_ASSERT(cudaMemcpy(Plen0,  gPlen,  sizeof(float4)*gpu[gpuid].autothread, cudaMemcpyDeviceToHost));
-           for(i=0;i<gpu[gpuid].autothread;i++)
-	      photoncount+=int(Plen0[i].w+0.5f);
+			CUDA_ASSERT(cudaMemcpy(Plen0,  gPlen,  sizeof(float4)*gpu[gpuid].autothread, cudaMemcpyDeviceToHost));
+			for(i=0;i<gpu[gpuid].autothread;i++)
+				photoncount+=int(Plen0[i].w+0.5f);
 
-           if(cfg->debuglevel & MCX_DEBUG_MOVE){
-               uint debugrec=0;
-	       CUDA_ASSERT(cudaMemcpyFromSymbol(&debugrec, gjumpdebug,sizeof(uint),0,cudaMemcpyDeviceToHost));
+			if(cfg->debuglevel & MCX_DEBUG_MOVE){
+				uint debugrec=0;
+				CUDA_ASSERT(cudaMemcpyFromSymbol(&debugrec, gjumpdebug,sizeof(uint),0,cudaMemcpyDeviceToHost));
 #pragma omp critical
-{
-	       if(debugrec>0){
-		   if(debugrec>cfg->maxdetphoton){
-			MCX_FPRINTF(cfg->flog,"WARNING: the saved trajectory positions (%d) \
-are more than what your have specified (%d), please use the --maxjumpdebug option to specify a greater number\n"
-                           ,debugrec,cfg->maxjumpdebug);
-		   }else{
-			MCX_FPRINTF(cfg->flog,"saved %ud trajectory positions, total: %d\t",debugrec,cfg->maxjumpdebug+debugrec);
-		   }
-                   debugrec=min(debugrec,cfg->maxjumpdebug);
-	           cfg->exportdebugdata=(float*)realloc(cfg->exportdebugdata,(cfg->debugdatalen+debugrec)*debuglen*sizeof(float));
-                   CUDA_ASSERT(cudaMemcpy(cfg->exportdebugdata+cfg->debugdatalen, gdebugdata,sizeof(float)*debuglen*debugrec,cudaMemcpyDeviceToHost));
-                   cfg->debugdatalen+=debugrec;
-	       }
-}
-           }
+				{
+					if(debugrec>0){
+						if(debugrec>cfg->maxdetphoton){
+							MCX_FPRINTF(cfg->flog,"WARNING: the saved trajectory positions (%d) \
+									are more than what your have specified (%d), please use the --maxjumpdebug option to specify a greater number\n"
+									,debugrec,cfg->maxjumpdebug);
+						}else{
+							MCX_FPRINTF(cfg->flog,"saved %ud trajectory positions, total: %d\t",debugrec,cfg->maxjumpdebug+debugrec);
+						}
+						debugrec=min(debugrec,cfg->maxjumpdebug);
+						cfg->exportdebugdata=(float*)realloc(cfg->exportdebugdata,(cfg->debugdatalen+debugrec)*debuglen*sizeof(float));
+						CUDA_ASSERT(cudaMemcpy(cfg->exportdebugdata+cfg->debugdatalen, gdebugdata,sizeof(float)*debuglen*debugrec,cudaMemcpyDeviceToHost));
+						cfg->debugdatalen+=debugrec;
+					}
+				}
+			}
 #ifdef SAVE_DETECTORS
-           if(cfg->issavedet){
-           	CUDA_ASSERT(cudaMemcpy(Pdet, gPdet,sizeof(float)*cfg->maxdetphoton*(detreclen),cudaMemcpyDeviceToHost));
-	        CUDA_ASSERT(cudaGetLastError());
-		if(cfg->issaveseed)
-		    CUDA_ASSERT(cudaMemcpy(seeddata, gseeddata,sizeof(RandType)*cfg->maxdetphoton*RAND_BUF_LEN,cudaMemcpyDeviceToHost));
-		if(detected>cfg->maxdetphoton){
-			MCX_FPRINTF(cfg->flog,"WARNING: the detected photon (%d) \
-is more than what your have specified (%d), please use the -H option to specify a greater number\t"
-                           ,detected,cfg->maxdetphoton);
-		}else{
-			MCX_FPRINTF(cfg->flog,"detected %d photons, total: %ld\t",detected,cfg->detectedcount+detected);
-		}
+			if(cfg->issavedet){
+				CUDA_ASSERT(cudaMemcpy(Pdet, gPdet,sizeof(float)*cfg->maxdetphoton*(detreclen),cudaMemcpyDeviceToHost));
+				CUDA_ASSERT(cudaGetLastError());
+				if(cfg->issaveseed)
+					CUDA_ASSERT(cudaMemcpy(seeddata, gseeddata,sizeof(RandType)*cfg->maxdetphoton*RAND_BUF_LEN,cudaMemcpyDeviceToHost));
+				if(detected>cfg->maxdetphoton){
+					MCX_FPRINTF(cfg->flog,"WARNING: the detected photon (%d) \
+							is more than what your have specified (%d), please use the -H option to specify a greater number\t"
+							,detected,cfg->maxdetphoton);
+				}else{
+					MCX_FPRINTF(cfg->flog,"detected %d photons, total: %ld\t",detected,cfg->detectedcount+detected);
+				}
 #pragma omp atomic
-                cfg->his.detected+=detected;
-                detected=MIN(detected,cfg->maxdetphoton);
-		if(cfg->exportdetected){
+				cfg->his.detected+=detected;
+				detected=MIN(detected,cfg->maxdetphoton);
+				if(cfg->exportdetected){
 #pragma omp critical
-{
-                        cfg->exportdetected=(float*)realloc(cfg->exportdetected,(cfg->detectedcount+detected)*detreclen*sizeof(float));
-			if(cfg->issaveseed && cfg->seeddata)
-			    cfg->seeddata=(RandType*)realloc(cfg->seeddata,(cfg->detectedcount+detected)*sizeof(RandType)*RAND_BUF_LEN);
-	                memcpy(cfg->exportdetected+cfg->detectedcount*(detreclen),Pdet,detected*(detreclen)*sizeof(float));
-			if(cfg->issaveseed && cfg->seeddata)
-			    memcpy(((RandType*)cfg->seeddata)+cfg->detectedcount*RAND_BUF_LEN,seeddata,detected*sizeof(RandType)*RAND_BUF_LEN);
-                        cfg->detectedcount+=detected;
-}
-		}
-	   }
+					{
+						cfg->exportdetected=(float*)realloc(cfg->exportdetected,(cfg->detectedcount+detected)*detreclen*sizeof(float));
+						if(cfg->issaveseed && cfg->seeddata)
+							cfg->seeddata=(RandType*)realloc(cfg->seeddata,(cfg->detectedcount+detected)*sizeof(RandType)*RAND_BUF_LEN);
+						memcpy(cfg->exportdetected+cfg->detectedcount*(detreclen),Pdet,detected*(detreclen)*sizeof(float));
+						if(cfg->issaveseed && cfg->seeddata)
+							memcpy(((RandType*)cfg->seeddata)+cfg->detectedcount*RAND_BUF_LEN,seeddata,detected*sizeof(RandType)*RAND_BUF_LEN);
+						cfg->detectedcount+=detected;
+					}
+				}
+			}
 #endif
-           mcx_flush(cfg);
+			mcx_flush(cfg);
 
-	   //handling the 2pt distributions
-           if(cfg->issave2pt){
-	       float *rawfield=(float*)malloc(sizeof(float)*fieldlen*2);
-               CUDA_ASSERT(cudaMemcpy(rawfield, gfield,sizeof(float)*fieldlen*2,cudaMemcpyDeviceToHost));
-               MCX_FPRINTF(cfg->flog,"transfer complete:\t%d ms\n",GetTimeMillis()-tic);  fflush(cfg->flog);
-	       for(i=0;i<(int)fieldlen;i++)  //accumulate field, can be done in the GPU
-	           field[i]=rawfield[i]+rawfield[i+fieldlen];
-	       free(rawfield);
+			//handling the 2pt distributions
+			if(cfg->issave2pt){
+				float *rawfield=(float*)malloc(sizeof(float)*fieldlen*2);
+				CUDA_ASSERT(cudaMemcpy(rawfield, gfield,sizeof(float)*fieldlen*2,cudaMemcpyDeviceToHost));
+				MCX_FPRINTF(cfg->flog,"transfer complete:\t%d ms\n",GetTimeMillis()-tic);  fflush(cfg->flog);
+				for(i=0;i<(int)fieldlen;i++)  //accumulate field, can be done in the GPU
+					field[i]=rawfield[i]+rawfield[i+fieldlen];
+				free(rawfield);
 
-               if(ABS(cfg->respin)>1){
-                   for(i=0;i<(int)fieldlen;i++)  //accumulate field, can be done in the GPU
-                      field[fieldlen+i]+=field[i];
-               }
-           }
-       } /*end of respin loop*/
+				if(ABS(cfg->respin)>1){
+					for(i=0;i<(int)fieldlen;i++)  //accumulate field, can be done in the GPU
+						field[fieldlen+i]+=field[i];
+				}
+			}
+		} /*end of respin loop*/
 
 #pragma omp critical
-       if(cfg->runtime<toc)
-           cfg->runtime=toc;
+		if(cfg->runtime<toc)
+			cfg->runtime=toc;
 
-       if(ABS(cfg->respin)>1)  //copy the accumulated fields back
-           memcpy(field,field+fieldlen,sizeof(float)*fieldlen);
+		if(ABS(cfg->respin)>1)  //copy the accumulated fields back
+			memcpy(field,field+fieldlen,sizeof(float)*fieldlen);
 
-       if(cfg->isnormalized){
-           CUDA_ASSERT(cudaMemcpy(energy,genergy,sizeof(float)*(gpu[gpuid].autothread<<1),cudaMemcpyDeviceToHost));
+		if(cfg->isnormalized){
+			CUDA_ASSERT(cudaMemcpy(energy,genergy,sizeof(float)*(gpu[gpuid].autothread<<1),cudaMemcpyDeviceToHost));
 #pragma omp critical
-{
-           for(i=0;i<gpu[gpuid].autothread;i++){
-               cfg->energyesc+=energy[i<<1];
-       	       cfg->energytot+=energy[(i<<1)+1];
-           }
-	   for(i=0;i<gpu[gpuid].autothread;i++)
-               cfg->energyabs+=Plen0[i].z;  // the accumulative absorpted energy near the source
-}
-       }
-       MCX_FPRINTF(cfg->flog,"data normalization complete : %d ms\n",GetTimeMillis()-tic);
+			{
+				for(i=0;i<gpu[gpuid].autothread;i++){
+					cfg->energyesc+=energy[i<<1];
+					cfg->energytot+=energy[(i<<1)+1];
+				}
+				for(i=0;i<gpu[gpuid].autothread;i++)
+					cfg->energyabs+=Plen0[i].z;  // the accumulative absorpted energy near the source
+			}
+		}
+		MCX_FPRINTF(cfg->flog,"data normalization complete : %d ms\n",GetTimeMillis()-tic);
 
-       if(cfg->exportfield){
-	       for(i=0;i<(int)fieldlen;i++)
+		if(cfg->exportfield){
+			for(i=0;i<(int)fieldlen;i++)
 #pragma omp atomic
-                  cfg->exportfield[i]+=field[i];
-       }
+				cfg->exportfield[i]+=field[i];
+		}
 
-       if(param.twin1<cfg->tend){
-            CUDA_ASSERT(cudaMemset(genergy,0,sizeof(float)*(gpu[gpuid].autothread<<1)));
-       }
-     } /*end of time-gate group loop*/
+		if(param.twin1<cfg->tend){
+			CUDA_ASSERT(cudaMemset(genergy,0,sizeof(float)*(gpu[gpuid].autothread<<1)));
+		}
+	} /*end of time-gate group loop*/
 #pragma omp barrier
 
-     /*let the master thread to deal with the normalization and file IO*/
+	/*let the master thread to deal with the normalization and file IO*/
 #pragma omp master
-{
-     if(cfg->isnormalized){
-	   float scale=1.f;
-	   int isnormalized=0;
-           MCX_FPRINTF(cfg->flog,"normalizing raw data ...\t");
-           cfg->energyabs+=cfg->energytot-cfg->energyesc;
-           if(cfg->outputtype==otFlux || cfg->outputtype==otFluence){
-               scale=cfg->unitinmm/(cfg->energytot*Vvox*cfg->tstep); /* Vvox (in mm^3 already) * (Tstep) * (Eabsorp/U) */
+	{
+		if(cfg->isnormalized){
+			float scale=1.f;
+			int isnormalized=0;
+			MCX_FPRINTF(cfg->flog,"normalizing raw data ...\t");
+			cfg->energyabs+=cfg->energytot-cfg->energyesc;
+			if(cfg->outputtype==otFlux || cfg->outputtype==otFluence){
+				scale=cfg->unitinmm/(cfg->energytot*Vvox*cfg->tstep); /* Vvox (in mm^3 already) * (Tstep) * (Eabsorp/U) */
 
-               if(cfg->outputtype==otFluence)
-		   scale*=cfg->tstep;
-	   }else if(cfg->outputtype==otEnergy)
-	       scale=1.f/cfg->energytot;
-	   else if(cfg->outputtype==otJacobian || cfg->outputtype==otWP){
-	       if(cfg->seed==SEED_FROM_FILE && cfg->replaydet==-1){
-                   int detid;
-		   for(detid=1;detid<=(int)cfg->detnum;detid++){
-	               scale=0.f; // the cfg->normalizer and cfg.his.normalizer are inaccurate in this case, but this is ok
-		       for(size_t i=0;i<cfg->nphoton;i++)
-		           if(cfg->replay.detid[i]==detid)
-	                       scale+=cfg->replay.weight[i];
-	               if(scale>0.f)
-	                   scale=cfg->unitinmm/scale;
-                       MCX_FPRINTF(cfg->flog,"normalization factor for detector %d alpha=%f\n",detid, scale);  fflush(cfg->flog);
-                       mcx_normalize(cfg->exportfield+(detid-1)*dimxyz*gpu[gpuid].maxgate,scale,dimxyz*gpu[gpuid].maxgate,cfg->isnormalized);
-		   }
-		   isnormalized=1;
-	       }else{
-	           scale=0.f;
-	           for(size_t i=0;i<cfg->nphoton;i++)
-	               scale+=cfg->replay.weight[i];
-	           if(scale>0.f)
-                       scale=cfg->unitinmm/scale;
-	       }
-           }
-         cfg->normalizer=scale;
-	 cfg->his.normalizer=scale;
-         if(!isnormalized){
-             MCX_FPRINTF(cfg->flog,"normalization factor alpha=%f\n",scale);  fflush(cfg->flog);
-	     mcx_normalize(cfg->exportfield,scale,fieldlen,cfg->isnormalized);
-	 }
-     }
-     if(cfg->issave2pt && cfg->parentid==mpStandalone){
-         MCX_FPRINTF(cfg->flog,"saving data to file ... %lu %d\t",fieldlen,gpu[gpuid].maxgate);
-         mcx_savedata(cfg->exportfield,fieldlen,cfg);
-         MCX_FPRINTF(cfg->flog,"saving data complete : %d ms\n\n",GetTimeMillis()-tic);
-         fflush(cfg->flog);
-     }
-     if(cfg->issavedet && cfg->parentid==mpStandalone && cfg->exportdetected){
-         cfg->his.unitinmm=cfg->unitinmm;
-         cfg->his.savedphoton=cfg->detectedcount;
-	 cfg->his.totalphoton=cfg->nphoton;
-         if(cfg->issaveseed)
-             cfg->his.seedbyte=sizeof(RandType)*RAND_BUF_LEN;
+				if(cfg->outputtype==otFluence)
+					scale*=cfg->tstep;
+			}else if(cfg->outputtype==otEnergy)
+				scale=1.f/cfg->energytot;
+			else if(cfg->outputtype==otJacobian || cfg->outputtype==otWP){
+				if(cfg->seed==SEED_FROM_FILE && cfg->replaydet==-1){
+					int detid;
+					for(detid=1;detid<=(int)cfg->detnum;detid++){
+						scale=0.f; // the cfg->normalizer and cfg.his.normalizer are inaccurate in this case, but this is ok
+						for(size_t i=0;i<cfg->nphoton;i++)
+							if(cfg->replay.detid[i]==detid)
+								scale+=cfg->replay.weight[i];
+						if(scale>0.f)
+							scale=cfg->unitinmm/scale;
+						MCX_FPRINTF(cfg->flog,"normalization factor for detector %d alpha=%f\n",detid, scale);  fflush(cfg->flog);
+						mcx_normalize(cfg->exportfield+(detid-1)*dimxyz*gpu[gpuid].maxgate,scale,dimxyz*gpu[gpuid].maxgate,cfg->isnormalized);
+					}
+					isnormalized=1;
+				}else{
+					scale=0.f;
+					for(size_t i=0;i<cfg->nphoton;i++)
+						scale+=cfg->replay.weight[i];
+					if(scale>0.f)
+						scale=cfg->unitinmm/scale;
+				}
+			}
+			cfg->normalizer=scale;
+			cfg->his.normalizer=scale;
+			if(!isnormalized){
+				MCX_FPRINTF(cfg->flog,"normalization factor alpha=%f\n",scale);  fflush(cfg->flog);
+				mcx_normalize(cfg->exportfield,scale,fieldlen,cfg->isnormalized);
+			}
+		}
+		if(cfg->issave2pt && cfg->parentid==mpStandalone){
+			MCX_FPRINTF(cfg->flog,"saving data to file ... %lu %d\t",fieldlen,gpu[gpuid].maxgate);
+			mcx_savedata(cfg->exportfield,fieldlen,cfg);
+			MCX_FPRINTF(cfg->flog,"saving data complete : %d ms\n\n",GetTimeMillis()-tic);
+			fflush(cfg->flog);
+		}
+		if(cfg->issavedet && cfg->parentid==mpStandalone && cfg->exportdetected){
+			cfg->his.unitinmm=cfg->unitinmm;
+			cfg->his.savedphoton=cfg->detectedcount;
+			cfg->his.totalphoton=cfg->nphoton;
+			if(cfg->issaveseed)
+				cfg->his.seedbyte=sizeof(RandType)*RAND_BUF_LEN;
 
-         cfg->his.detected=cfg->detectedcount;
-         mcx_savedetphoton(cfg->exportdetected,cfg->seeddata,cfg->detectedcount,0,cfg);
-     }
-     if((cfg->debuglevel & MCX_DEBUG_MOVE) && cfg->parentid==mpStandalone && cfg->exportdebugdata){
-         cfg->his.colcount=MCX_DEBUG_REC_LEN;
-         cfg->his.savedphoton=cfg->debugdatalen;
-	 cfg->his.totalphoton=cfg->nphoton;
-         cfg->his.detected=0;
-         mcx_savedetphoton(cfg->exportdebugdata,NULL,cfg->debugdatalen,0,cfg);
-     }
-}
+			cfg->his.detected=cfg->detectedcount;
+			mcx_savedetphoton(cfg->exportdetected,cfg->seeddata,cfg->detectedcount,0,cfg);
+		}
+		if((cfg->debuglevel & MCX_DEBUG_MOVE) && cfg->parentid==mpStandalone && cfg->exportdebugdata){
+			cfg->his.colcount=MCX_DEBUG_REC_LEN;
+			cfg->his.savedphoton=cfg->debugdatalen;
+			cfg->his.totalphoton=cfg->nphoton;
+			cfg->his.detected=0;
+			mcx_savedetphoton(cfg->exportdebugdata,NULL,cfg->debugdatalen,0,cfg);
+		}
+	}
 #pragma omp barrier
 
-     CUDA_ASSERT(cudaMemcpy(Ppos,  gPpos, sizeof(float4)*gpu[gpuid].autothread, cudaMemcpyDeviceToHost));
-     CUDA_ASSERT(cudaMemcpy(Pdir,  gPdir, sizeof(float4)*gpu[gpuid].autothread, cudaMemcpyDeviceToHost));
-     CUDA_ASSERT(cudaMemcpy(Plen,  gPlen, sizeof(float4)*gpu[gpuid].autothread, cudaMemcpyDeviceToHost));
-     if(cfg->seed!=SEED_FROM_FILE)
-        CUDA_ASSERT(cudaMemcpy(Pseed, gPseed,sizeof(RandType)*gpu[gpuid].autothread*RAND_BUF_LEN,   cudaMemcpyDeviceToHost));
-     else
-        CUDA_ASSERT(cudaMemcpy(Pseed, gPseed,sizeof(RandType)*cfg->nphoton*RAND_BUF_LEN,   cudaMemcpyDeviceToHost));
-     CUDA_ASSERT(cudaMemcpy(energy,genergy,sizeof(float)*(gpu[gpuid].autothread<<1),cudaMemcpyDeviceToHost));
+	CUDA_ASSERT(cudaMemcpy(Ppos,  gPpos, sizeof(float4)*gpu[gpuid].autothread, cudaMemcpyDeviceToHost));
+	CUDA_ASSERT(cudaMemcpy(Pdir,  gPdir, sizeof(float4)*gpu[gpuid].autothread, cudaMemcpyDeviceToHost));
+	CUDA_ASSERT(cudaMemcpy(Plen,  gPlen, sizeof(float4)*gpu[gpuid].autothread, cudaMemcpyDeviceToHost));
+	if(cfg->seed!=SEED_FROM_FILE)
+		CUDA_ASSERT(cudaMemcpy(Pseed, gPseed,sizeof(RandType)*gpu[gpuid].autothread*RAND_BUF_LEN,   cudaMemcpyDeviceToHost));
+	else
+		CUDA_ASSERT(cudaMemcpy(Pseed, gPseed,sizeof(RandType)*cfg->nphoton*RAND_BUF_LEN,   cudaMemcpyDeviceToHost));
+	CUDA_ASSERT(cudaMemcpy(energy,genergy,sizeof(float)*(gpu[gpuid].autothread<<1),cudaMemcpyDeviceToHost));
 
 #ifdef TEST_RACING
-     {
-       float totalcount=0.f,hitcount=0.f;
-       for (i=0; i<fieldlen; i++)
-          hitcount+=field[i];
-       for (i=0; i<gpu[gpuid].autothread; i++)
-	  totalcount+=Pseed[i];
+	{
+		float totalcount=0.f,hitcount=0.f;
+		for (i=0; i<fieldlen; i++)
+			hitcount+=field[i];
+		for (i=0; i<gpu[gpuid].autothread; i++)
+			totalcount+=Pseed[i];
 
-       MCX_FPRINTF(cfg->flog,"expected total recording number: %f, got %f, missed %f\n",
-          totalcount,hitcount,(totalcount-hitcount)/totalcount);
-     }
+		MCX_FPRINTF(cfg->flog,"expected total recording number: %f, got %f, missed %f\n",
+				totalcount,hitcount,(totalcount-hitcount)/totalcount);
+	}
 #endif
 
 #pragma omp master
-{
-     printnum=(gpu[gpuid].autothread<(int)cfg->printnum) ? gpu[gpuid].autothread : cfg->printnum;
-     for (i=0; i<(int)printnum; i++) {
-            MCX_FPRINTF(cfg->flog,"% 4d[A% f % f % f]C%3d J%5d W% 8f(P%.13f %.13f %.13f)T% 5.3e L% 5.3f %.0f\n", i,
-            Pdir[i].x,Pdir[i].y,Pdir[i].z,(int)Plen[i].w,(int)Pdir[i].w,Ppos[i].w, 
-            Ppos[i].x,Ppos[i].y,Ppos[i].z,Plen[i].y,Plen[i].x,(float)Pseed[i]);
-     }
-     // total energy here equals total simulated photons+unfinished photons for all threads
-     MCX_FPRINTF(cfg->flog,"simulated %ld photons (%ld) with %d threads (repeat x%d)\nMCX simulation speed: %.2f photon/ms\n",
-             (long int)cfg->nphoton*((cfg->respin>1) ? (cfg->respin) : 1),(long int)cfg->nphoton*((cfg->respin>1) ? (cfg->respin) : 1),
-	     gpu[gpuid].autothread,ABS(cfg->respin),(double)cfg->nphoton*((cfg->respin>1) ? (cfg->respin) : 1)/max(1,cfg->runtime)); fflush(cfg->flog);
-     MCX_FPRINTF(cfg->flog,"total simulated energy: %.2f\tabsorbed: %5.5f%%\n(loss due to initial specular reflection is excluded in the total)\n",
-             cfg->energytot,(cfg->energytot-cfg->energyesc)/cfg->energytot*100.f);fflush(cfg->flog);
-     fflush(cfg->flog);
-     
-     cfg->energyabs=cfg->energytot-cfg->energyesc;
-}
+	{
+		printnum=(gpu[gpuid].autothread<(int)cfg->printnum) ? gpu[gpuid].autothread : cfg->printnum;
+		for (i=0; i<(int)printnum; i++) {
+			MCX_FPRINTF(cfg->flog,"% 4d[A% f % f % f]C%3d J%5d W% 8f(P%.13f %.13f %.13f)T% 5.3e L% 5.3f %.0f\n", i,
+					Pdir[i].x,Pdir[i].y,Pdir[i].z,(int)Plen[i].w,(int)Pdir[i].w,Ppos[i].w, 
+					Ppos[i].x,Ppos[i].y,Ppos[i].z,Plen[i].y,Plen[i].x,(float)Pseed[i]);
+		}
+		// total energy here equals total simulated photons+unfinished photons for all threads
+		MCX_FPRINTF(cfg->flog,"simulated %ld photons (%ld) with %d threads (repeat x%d)\nMCX simulation speed: %.2f photon/ms\n",
+				(long int)cfg->nphoton*((cfg->respin>1) ? (cfg->respin) : 1),(long int)cfg->nphoton*((cfg->respin>1) ? (cfg->respin) : 1),
+				gpu[gpuid].autothread,ABS(cfg->respin),(double)cfg->nphoton*((cfg->respin>1) ? (cfg->respin) : 1)/max(1,cfg->runtime)); fflush(cfg->flog);
+		MCX_FPRINTF(cfg->flog,"total simulated energy: %.2f\tabsorbed: %5.5f%%\n(loss due to initial specular reflection is excluded in the total)\n",
+				cfg->energytot,(cfg->energytot-cfg->energyesc)/cfg->energytot*100.f);fflush(cfg->flog);
+		fflush(cfg->flog);
+
+		cfg->energyabs=cfg->energytot-cfg->energyesc;
+	}
 #pragma omp barrier
 
-     CUDA_ASSERT(cudaFree(gmedia));
-     CUDA_ASSERT(cudaFree(gfield));
-     CUDA_ASSERT(cudaFree(gPpos));
-     CUDA_ASSERT(cudaFree(gPdir));
-     CUDA_ASSERT(cudaFree(gPlen));
-     CUDA_ASSERT(cudaFree(gPseed));
-     CUDA_ASSERT(cudaFree(genergy));
-     CUDA_ASSERT(cudaFree(gPdet));
-     CUDA_ASSERT(cudaFree(gdetected));
-     if(cfg->issaveseed){
-         CUDA_ASSERT(cudaFree(gseeddata));
-	 free(seeddata);
-     }
-     if(cfg->seed==SEED_FROM_FILE){
-         if(cfg->replay.weight)
-             CUDA_ASSERT(cudaFree(greplayw));
-         if(cfg->replay.tof)
-             CUDA_ASSERT(cudaFree(greplaytof));
-         if(cfg->replay.detid)
-             CUDA_ASSERT(cudaFree(greplaydetid));
-     }
+	CUDA_ASSERT(cudaFree(gmedia));
+	CUDA_ASSERT(cudaFree(gfield));
+	CUDA_ASSERT(cudaFree(gPpos));
+	CUDA_ASSERT(cudaFree(gPdir));
+	CUDA_ASSERT(cudaFree(gPlen));
+	CUDA_ASSERT(cudaFree(gPseed));
+	CUDA_ASSERT(cudaFree(genergy));
+	CUDA_ASSERT(cudaFree(gPdet));
+	CUDA_ASSERT(cudaFree(gdetected));
+	if(cfg->issaveseed){
+		CUDA_ASSERT(cudaFree(gseeddata));
+		free(seeddata);
+	}
+	if(cfg->seed==SEED_FROM_FILE){
+		if(cfg->replay.weight)
+			CUDA_ASSERT(cudaFree(greplayw));
+		if(cfg->replay.tof)
+			CUDA_ASSERT(cudaFree(greplaytof));
+		if(cfg->replay.detid)
+			CUDA_ASSERT(cudaFree(greplaydetid));
+	}
 
-     CUDA_ASSERT(cudaDeviceReset());
+	CUDA_ASSERT(cudaDeviceReset());
 
-     free(Ppos);
-     free(Pdir);
-     free(Plen);
-     free(Plen0);
-     free(Pseed);
-     free(Pdet);
-     free(energy);
-     free(field);
+	free(Ppos);
+	free(Pdir);
+	free(Plen);
+	free(Plen0);
+	free(Pseed);
+	free(Pdet);
+	free(energy);
+	free(field);
 }

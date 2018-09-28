@@ -98,7 +98,9 @@ typedef unsigned char uchar;
 
 typedef struct  __align__(16) KernelParams {
   float3 vsize;                      /**< volume voxel size in grid unit, always 1,1,1 */
-  float  minstep;                    /**< minimum step of the 3, always 1 */
+  //float  minstep;                    /**< minimum step of the 3, always 1 */
+  double minstep;
+
   float  twin0;                      /**< starting time of the current time gate, unit is s */
   float  twin1;                      /**< end time of the current time gate, unit is s  */
   float  tmax;                       /**< maximum time gate length, same as cfg.tend */
