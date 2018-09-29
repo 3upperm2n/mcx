@@ -48,7 +48,8 @@ extern "C" {
 #define GPUDEBUG(x)
 #endif
 
-typedef float4 MCXpos; /**< x,y,z: position of the photon, w: weight of the photon*/
+//typedef float4 MCXpos; /**< x,y,z: position of the photon, w: weight of the photon*/
+typedef double4 MCXpos; /**< x,y,z: position of the photon, w: weight of the photon*/
 
 typedef struct  __align__(16) MCXDir{
         float x; /**< directional vector of the photon, x-component*/
@@ -110,7 +111,10 @@ typedef struct  __align__(16) KernelParams {
   unsigned int dorefint;             /**< flag if mcx perform reflection calculations at internal boundaries */
   unsigned int savedet;              /**< flag if mcx outputs detected photon partial length data */
   float  Rtstep;                     /**< reciprocal of the step size */
-  float4 ps;                         /**< initial position vector, for pencil beam */
+
+  //float4 ps;                         /**< initial position vector, for pencil beam */
+  double4 ps;                         /**< initial position vector, for pencil beam */
+
   float4 c0;                         /**< initial directon vector, for pencil beam */
   float3 maxidx;                     /**< maximum index in x/y/z directions for out-of-bound tests */
   uint4  dimlen;                     /**< maximum index used to convert x/y/z to 1D array index */
