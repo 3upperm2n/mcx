@@ -597,7 +597,6 @@ __device__ inline void rotatevector(MCXdir *v, float stheta, float ctheta, float
  * @param[in,out] gprogress: pointer to the host variable to update progress bar
  */
 
-template <int mcxsource>
 __device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,Medium *prop,uint *idx1d, float *field,
            uint *mediaid,float *w0,uint isdet, float ppath[],float energyloss[],float energylaunched[],float n_det[],uint *dpnum,
 	   RandType t[RAND_BUF_LEN],RandType photonseed[RAND_BUF_LEN],
@@ -648,235 +647,217 @@ __device__ inline int launchnewphoton(MCXpos *p,MCXdir *v,MCXtime *f,float3* rv,
       /**
        * Attempt to launch a new photon until success
        */
+
       do{
-	  *((float4*)p)=gcfg->ps;
-	  *((float4*)v)=gcfg->c0;
-	  *((float4*)f)=float4(0.f,0.f,gcfg->minaccumtime,f->ndone);
+          *((float4*)p)=gcfg->ps;
+          *((float4*)v)=gcfg->c0;
+          *((float4*)f)=float4(0.f,0.f,gcfg->minaccumtime,f->ndone);
           *idx1d=gcfg->idx1dorig;
           *mediaid=gcfg->mediaidorig;
-	  if(gcfg->issaveseed)
+          if(gcfg->issaveseed) {
               copystate(t,photonseed);
+          }
+          
+          if(gcfg->srctype==MCX_SRC_PENCIL){ /*source can be outside*/
+              // do nothing
+          }else if(gcfg->srctype==MCX_SRC_PLANAR || gcfg->srctype==MCX_SRC_PATTERN || gcfg->srctype==MCX_SRC_PATTERN3D || gcfg->srctype==MCX_SRC_FOURIER || gcfg->srctype==MCX_SRC_PENCILARRAY){
+              float rx=rand_uniform01(t);
+              float ry=rand_uniform01(t);
+              float rz;
+              if(gcfg->srctype==MCX_SRC_PATTERN3D){
+                  rz=rand_uniform01(t);
+                  *((float4*)p)=float4(p->x+rx*gcfg->srcparam1.x,
+                          p->y+ry*gcfg->srcparam1.y,
+                          p->z+rz*gcfg->srcparam1.z,
+                          p->w);
+              }else{
+                  *((float4*)p)=float4(p->x+rx*gcfg->srcparam1.x+ry*gcfg->srcparam2.x,
+                          p->y+rx*gcfg->srcparam1.y+ry*gcfg->srcparam2.y,
+                          p->z+rx*gcfg->srcparam1.z+ry*gcfg->srcparam2.z,
+                          p->w);
+              }
+              if(gcfg->srctype==MCX_SRC_PATTERN) // need to prevent rx/ry=1 here
+                  p->w=srcpattern[(int)(ry*JUST_BELOW_ONE*gcfg->srcparam2.w)*(int)(gcfg->srcparam1.w)+(int)(rx*JUST_BELOW_ONE*gcfg->srcparam1.w)];
+              else if(gcfg->srctype==MCX_SRC_PATTERN3D)
+                  p->w=srcpattern[(int)(rz*JUST_BELOW_ONE*gcfg->srcparam1.z)*(int)(gcfg->srcparam1.y)*(int)(gcfg->srcparam1.x)+
+                      (int)(ry*JUST_BELOW_ONE*gcfg->srcparam1.y)*(int)(gcfg->srcparam1.x)+(int)(rx*JUST_BELOW_ONE*gcfg->srcparam1.x)];
+              else if(gcfg->srctype==MCX_SRC_FOURIER)
+                  p->w=(cosf((floorf(gcfg->srcparam1.w)*rx+floorf(gcfg->srcparam2.w)*ry
+                                  +gcfg->srcparam1.w-floorf(gcfg->srcparam1.w))*TWO_PI)*(1.f-gcfg->srcparam2.w+floorf(gcfg->srcparam2.w))+1.f)*0.5f; //between 0 and 1
+              else if(gcfg->srctype==MCX_SRC_PENCILARRAY){
+                  p->x=gcfg->ps.x+ floorf(rx*gcfg->srcparam1.w)*gcfg->srcparam1.x/(gcfg->srcparam1.w-1.f)+floorf(ry*gcfg->srcparam2.w)*gcfg->srcparam2.x/(gcfg->srcparam2.w-1.f);
+                  p->y=gcfg->ps.y+ floorf(rx*gcfg->srcparam1.w)*gcfg->srcparam1.y/(gcfg->srcparam1.w-1.f)+floorf(ry*gcfg->srcparam2.w)*gcfg->srcparam2.y/(gcfg->srcparam2.w-1.f);
+                  p->z=gcfg->ps.z+ floorf(rx*gcfg->srcparam1.w)*gcfg->srcparam1.z/(gcfg->srcparam1.w-1.f)+floorf(ry*gcfg->srcparam2.w)*gcfg->srcparam2.z/(gcfg->srcparam2.w-1.f);
+              }
+              *idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
+              if(p->x<0.f || p->y<0.f || p->z<0.f || p->x>=gcfg->maxidx.x || p->y>=gcfg->maxidx.y || p->z>=gcfg->maxidx.z){
+                  *mediaid=0;
+              }else{
+                  *mediaid=media[*idx1d];
+              }
+              *rv=float3(rv->x+(gcfg->srcparam1.x+gcfg->srcparam2.x)*0.5f,
+                      rv->y+(gcfg->srcparam1.y+gcfg->srcparam2.y)*0.5f,
+                      rv->z+(gcfg->srcparam1.z+gcfg->srcparam2.z)*0.5f);
 
-          /**
-           * Only one branch is taken because of template, this can reduce thread divergence
-           */
-	  switch(mcxsource) {
-		case(MCX_SRC_PLANAR):
-		case(MCX_SRC_PATTERN):
-		case(MCX_SRC_PATTERN3D):
-		case(MCX_SRC_FOURIER):
-		case(MCX_SRC_PENCILARRAY): { /*a rectangular grid over a plane*/
-		      float rx=rand_uniform01(t);
-		      float ry=rand_uniform01(t);
-		      float rz;
-		      if(gcfg->srctype==MCX_SRC_PATTERN3D){
-		            rz=rand_uniform01(t);
-		            *((float4*)p)=float4(p->x+rx*gcfg->srcparam1.x,
-			 		         p->y+ry*gcfg->srcparam1.y,
-					         p->z+rz*gcfg->srcparam1.z,
-					         p->w);
-		      }else{
-		          *((float4*)p)=float4(p->x+rx*gcfg->srcparam1.x+ry*gcfg->srcparam2.x,
-					       p->y+rx*gcfg->srcparam1.y+ry*gcfg->srcparam2.y,
-					       p->z+rx*gcfg->srcparam1.z+ry*gcfg->srcparam2.z,
-					       p->w);
-		      }
-		      if(gcfg->srctype==MCX_SRC_PATTERN) // need to prevent rx/ry=1 here
-			  p->w=srcpattern[(int)(ry*JUST_BELOW_ONE*gcfg->srcparam2.w)*(int)(gcfg->srcparam1.w)+(int)(rx*JUST_BELOW_ONE*gcfg->srcparam1.w)];
-		      else if(gcfg->srctype==MCX_SRC_PATTERN3D)
-		          p->w=srcpattern[(int)(rz*JUST_BELOW_ONE*gcfg->srcparam1.z)*(int)(gcfg->srcparam1.y)*(int)(gcfg->srcparam1.x)+
-		                          (int)(ry*JUST_BELOW_ONE*gcfg->srcparam1.y)*(int)(gcfg->srcparam1.x)+(int)(rx*JUST_BELOW_ONE*gcfg->srcparam1.x)];
-		      else if(gcfg->srctype==MCX_SRC_FOURIER)
-			  p->w=(cosf((floorf(gcfg->srcparam1.w)*rx+floorf(gcfg->srcparam2.w)*ry
-				  +gcfg->srcparam1.w-floorf(gcfg->srcparam1.w))*TWO_PI)*(1.f-gcfg->srcparam2.w+floorf(gcfg->srcparam2.w))+1.f)*0.5f; //between 0 and 1
-		      else if(gcfg->srctype==MCX_SRC_PENCILARRAY){
-			  p->x=gcfg->ps.x+ floorf(rx*gcfg->srcparam1.w)*gcfg->srcparam1.x/(gcfg->srcparam1.w-1.f)+floorf(ry*gcfg->srcparam2.w)*gcfg->srcparam2.x/(gcfg->srcparam2.w-1.f);
-			  p->y=gcfg->ps.y+ floorf(rx*gcfg->srcparam1.w)*gcfg->srcparam1.y/(gcfg->srcparam1.w-1.f)+floorf(ry*gcfg->srcparam2.w)*gcfg->srcparam2.y/(gcfg->srcparam2.w-1.f);
-			  p->z=gcfg->ps.z+ floorf(rx*gcfg->srcparam1.w)*gcfg->srcparam1.z/(gcfg->srcparam1.w-1.f)+floorf(ry*gcfg->srcparam2.w)*gcfg->srcparam2.z/(gcfg->srcparam2.w-1.f);
-		      }
-		      *idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
-		      if(p->x<0.f || p->y<0.f || p->z<0.f || p->x>=gcfg->maxidx.x || p->y>=gcfg->maxidx.y || p->z>=gcfg->maxidx.z){
-			  *mediaid=0;
-		      }else{
-			  *mediaid=media[*idx1d];
-		      }
-                      *rv=float3(rv->x+(gcfg->srcparam1.x+gcfg->srcparam2.x)*0.5f,
-		                 rv->y+(gcfg->srcparam1.y+gcfg->srcparam2.y)*0.5f,
-				 rv->z+(gcfg->srcparam1.z+gcfg->srcparam2.z)*0.5f);
-		      break;
-		}
-		case(MCX_SRC_FOURIERX):
-		case(MCX_SRC_FOURIERX2D): { // [v1x][v1y][v1z][|v2|]; [kx][ky][phi0][M], unit(v0) x unit(v1)=unit(v2)
-		      float rx=rand_uniform01(t);
-		      float ry=rand_uniform01(t);
-		      float4 v2=gcfg->srcparam1;
-		      // calculate v2 based on v2=|v2| * unit(v0) x unit(v1)
-		      v2.w*=rsqrt(gcfg->srcparam1.x*gcfg->srcparam1.x+gcfg->srcparam1.y*gcfg->srcparam1.y+gcfg->srcparam1.z*gcfg->srcparam1.z);
-		      v2.x=v2.w*(gcfg->c0.y*gcfg->srcparam1.z - gcfg->c0.z*gcfg->srcparam1.y);
-		      v2.y=v2.w*(gcfg->c0.z*gcfg->srcparam1.x - gcfg->c0.x*gcfg->srcparam1.z); 
-		      v2.z=v2.w*(gcfg->c0.x*gcfg->srcparam1.y - gcfg->c0.y*gcfg->srcparam1.x);
-		      *((float4*)p)=float4(p->x+rx*gcfg->srcparam1.x+ry*v2.x,
-					   p->y+rx*gcfg->srcparam1.y+ry*v2.y,
-					   p->z+rx*gcfg->srcparam1.z+ry*v2.z,
-					   p->w);
-		      if(gcfg->srctype==MCX_SRC_FOURIERX2D)
-			 p->w=(sinf((gcfg->srcparam2.x*rx+gcfg->srcparam2.z)*TWO_PI)*sinf((gcfg->srcparam2.y*ry+gcfg->srcparam2.w)*TWO_PI)+1.f)*0.5f; //between 0 and 1
-		      else
-			 p->w=(cosf((gcfg->srcparam2.x*rx+gcfg->srcparam2.y*ry+gcfg->srcparam2.z)*TWO_PI)*(1.f-gcfg->srcparam2.w)+1.f)*0.5f; //between 0 and 1
-   
-		      *idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
-		      if(p->x<0.f || p->y<0.f || p->z<0.f || p->x>=gcfg->maxidx.x || p->y>=gcfg->maxidx.y || p->z>=gcfg->maxidx.z){
-			  *mediaid=0;
-		      }else{
-			  *mediaid=media[*idx1d];
-		      }
-                      *rv=float3(rv->x+(gcfg->srcparam1.x+v2.x)*0.5f,
-		                 rv->y+(gcfg->srcparam1.y+v2.y)*0.5f,
-				 rv->z+(gcfg->srcparam1.z+v2.z)*0.5f);
-		      break;
-		}
-		case(MCX_SRC_DISK):
-		case(MCX_SRC_GAUSSIAN): { // uniform disk distribution or Gaussian-beam
-		      // Uniform disk point picking
-		      // http://mathworld.wolfram.com/DiskPointPicking.html
-		      float sphi, cphi;
-		      float phi=TWO_PI*rand_uniform01(t);
-		      sincosf(phi,&sphi,&cphi);
-		      float r;
-		      if(gcfg->srctype==MCX_SRC_DISK)
-			  r=sqrtf(rand_uniform01(t))*gcfg->srcparam1.x;
-		      else if(fabs(gcfg->c0.w) < 1e-5f || fabs(gcfg->srcparam1.y) < 1e-5f)
-		          r=sqrtf(-0.5f*logf(rand_uniform01(t)))*gcfg->srcparam1.x;
-		      else{
-		          r=gcfg->srcparam1.x*gcfg->srcparam1.x*M_PI/gcfg->srcparam1.y; //Rayleigh range
-		          r=sqrtf(-0.5f*logf(rand_uniform01(t))*(1.f+(gcfg->c0.w*gcfg->c0.w/(r*r))))*gcfg->srcparam1.x;
-                      }
-		      if( v->z>-1.f+EPS && v->z<1.f-EPS ) {
-			  float tmp0=1.f-v->z*v->z;
-			  float tmp1=r*rsqrtf(tmp0);
-			  *((float4*)p)=float4(
-			       p->x+tmp1*(v->x*v->z*cphi - v->y*sphi),
-			       p->y+tmp1*(v->y*v->z*cphi + v->x*sphi),
-			       p->z-tmp1*tmp0*cphi                   ,
-			       p->w
-			  );
-			  GPUDEBUG(("new dir: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
-		      }else{
-			  p->x+=r*cphi;
-			  p->y+=r*sphi;
-			  GPUDEBUG(("new dir-z: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
-		      }
-		      *idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
-		      if(p->x<0.f || p->y<0.f || p->z<0.f || p->x>=gcfg->maxidx.x || p->y>=gcfg->maxidx.y || p->z>=gcfg->maxidx.z){
-			  *mediaid=0;
-		      }else{
-			  *mediaid=media[*idx1d];
-		      }
-		      break;
-		  }
-		case(MCX_SRC_CONE):
-		case(MCX_SRC_ISOTROPIC):
-		case(MCX_SRC_ARCSINE): {
-		      // Uniform point picking on a sphere 
-		      // http://mathworld.wolfram.com/SpherePointPicking.html
-		      float ang,stheta,ctheta,sphi,cphi;
-		      ang=TWO_PI*rand_uniform01(t); //next arimuth angle
-		      sincosf(ang,&sphi,&cphi);
-		      if(gcfg->srctype==MCX_SRC_CONE){  // a solid-angle section of a uniform sphere
-			  do{
-			      ang=(gcfg->srcparam1.y>0) ? TWO_PI*rand_uniform01(t) : acosf(2.f*rand_uniform01(t)-1.f); //sine distribution
-			  }while(ang>gcfg->srcparam1.x);
-		      }else{
-			  if(gcfg->srctype==MCX_SRC_ISOTROPIC) // uniform sphere
-			      ang=acosf(2.f*rand_uniform01(t)-1.f); //sine distribution
-			  else
-			      ang=ONE_PI*rand_uniform01(t); //uniform distribution in zenith angle, arcsine
-		      }
-		      sincosf(ang,&stheta,&ctheta);
-		      rotatevector(v,stheta,ctheta,sphi,cphi);
-                      f->pathlen=0.f;
-		      break;
-		}
-		case(MCX_SRC_ZGAUSSIAN): {
-		      float ang,stheta,ctheta,sphi,cphi;
-		      ang=TWO_PI*rand_uniform01(t); //next arimuth angle
-		      sincosf(ang,&sphi,&cphi);
-		      ang=sqrtf(-2.f*logf(rand_uniform01(t)))*(1.f-2.f*rand_uniform01(t))*gcfg->srcparam1.x;
-		      sincosf(ang,&stheta,&ctheta);
-		      rotatevector(v,stheta,ctheta,sphi,cphi);
-                      f->pathlen=0.f;
-		      break;
-		}
-		case(MCX_SRC_LINE):
-		case(MCX_SRC_SLIT): {
-		      float r=rand_uniform01(t);
-		      *((float4*)p)=float4(p->x+r*gcfg->srcparam1.x,
-					   p->y+r*gcfg->srcparam1.y,
-					   p->z+r*gcfg->srcparam1.z,
-					   p->w);
-		      if(gcfg->srctype==MCX_SRC_LINE){
-			      float s,q;
-			      r=1.f-2.f*rand_uniform01(t);
-			      s=1.f-2.f*rand_uniform01(t);
-			      q=sqrt(1.f-v->x*v->x-v->y*v->y)*(rand_uniform01(t)>0.5f ? 1.f : -1.f);
-			      *((float4*)v)=float4(v->y*q-v->z*s,v->z*r-v->x*q,v->x*s-v->y*r,v->nscat);
-		      }
-                      *rv=float3(rv->x+(gcfg->srcparam1.x)*0.5f,
-		                 rv->y+(gcfg->srcparam1.y)*0.5f,
-				 rv->z+(gcfg->srcparam1.z)*0.5f);
-                      f->pathlen=(gcfg->srctype==MCX_SRC_SLIT)?-1.f:0.f;
-		      break;
-		}
-	  }
-          /**
-           * If beam focus is set, determine the incident angle
-           */
+          }else if(gcfg->srctype==MCX_SRC_FOURIERX||gcfg->srctype==MCX_SRC_FOURIERX2D){
+              float rx=rand_uniform01(t);
+              float ry=rand_uniform01(t);
+              float4 v2=gcfg->srcparam1;
+              // calculate v2 based on v2=|v2| * unit(v0) x unit(v1)
+              v2.w*=rsqrt(gcfg->srcparam1.x*gcfg->srcparam1.x+gcfg->srcparam1.y*gcfg->srcparam1.y+gcfg->srcparam1.z*gcfg->srcparam1.z);
+              v2.x=v2.w*(gcfg->c0.y*gcfg->srcparam1.z - gcfg->c0.z*gcfg->srcparam1.y);
+              v2.y=v2.w*(gcfg->c0.z*gcfg->srcparam1.x - gcfg->c0.x*gcfg->srcparam1.z); 
+              v2.z=v2.w*(gcfg->c0.x*gcfg->srcparam1.y - gcfg->c0.y*gcfg->srcparam1.x);
+              *((float4*)p)=float4(p->x+rx*gcfg->srcparam1.x+ry*v2.x,
+                      p->y+rx*gcfg->srcparam1.y+ry*v2.y,
+                      p->z+rx*gcfg->srcparam1.z+ry*v2.z,
+                      p->w);
+              if(gcfg->srctype==MCX_SRC_FOURIERX2D)
+                  p->w=(sinf((gcfg->srcparam2.x*rx+gcfg->srcparam2.z)*TWO_PI)*sinf((gcfg->srcparam2.y*ry+gcfg->srcparam2.w)*TWO_PI)+1.f)*0.5f; //between 0 and 1
+              else
+                  p->w=(cosf((gcfg->srcparam2.x*rx+gcfg->srcparam2.y*ry+gcfg->srcparam2.z)*TWO_PI)*(1.f-gcfg->srcparam2.w)+1.f)*0.5f; //between 0 and 1
+
+              *idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
+              if(p->x<0.f || p->y<0.f || p->z<0.f || p->x>=gcfg->maxidx.x || p->y>=gcfg->maxidx.y || p->z>=gcfg->maxidx.z){
+                  *mediaid=0;
+              }else{
+                  *mediaid=media[*idx1d];
+              }
+              *rv=float3(rv->x+(gcfg->srcparam1.x+v2.x)*0.5f,
+                      rv->y+(gcfg->srcparam1.y+v2.y)*0.5f,
+                      rv->z+(gcfg->srcparam1.z+v2.z)*0.5f);
+
+          }else if(gcfg->srctype==MCX_SRC_DISK ||gcfg->srctype==MCX_SRC_GAUSSIAN){ // uniform disk distribution or Gaussian-beam
+              // Uniform disk point picking
+              // http://mathworld.wolfram.com/DiskPointPicking.html
+              float sphi, cphi;
+              float phi=TWO_PI*rand_uniform01(t);
+              sincosf(phi,&sphi,&cphi);
+              float r;
+              if(gcfg->srctype==MCX_SRC_DISK)
+                  r=sqrtf(rand_uniform01(t))*gcfg->srcparam1.x;
+              else if(fabs(gcfg->c0.w) < 1e-5f || fabs(gcfg->srcparam1.y) < 1e-5f)
+                  r=sqrtf(-0.5f*logf(rand_uniform01(t)))*gcfg->srcparam1.x;
+              else{
+                  r=gcfg->srcparam1.x*gcfg->srcparam1.x*M_PI/gcfg->srcparam1.y; //Rayleigh range
+                  r=sqrtf(-0.5f*logf(rand_uniform01(t))*(1.f+(gcfg->c0.w*gcfg->c0.w/(r*r))))*gcfg->srcparam1.x;
+              }
+              if( v->z>-1.f+EPS && v->z<1.f-EPS ) {
+                  float tmp0=1.f-v->z*v->z;
+                  float tmp1=r*rsqrtf(tmp0);
+                  *((float4*)p)=float4(
+                          p->x+tmp1*(v->x*v->z*cphi - v->y*sphi),
+                          p->y+tmp1*(v->y*v->z*cphi + v->x*sphi),
+                          p->z-tmp1*tmp0*cphi                   ,
+                          p->w
+                          );
+                  GPUDEBUG(("new dir: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
+              }else{
+                  p->x+=r*cphi;
+                  p->y+=r*sphi;
+                  GPUDEBUG(("new dir-z: %10.5e %10.5e %10.5e\n",v->x,v->y,v->z));
+              }
+              *idx1d=(int(floorf(p->z))*gcfg->dimlen.y+int(floorf(p->y))*gcfg->dimlen.x+int(floorf(p->x)));
+              if(p->x<0.f || p->y<0.f || p->z<0.f || p->x>=gcfg->maxidx.x || p->y>=gcfg->maxidx.y || p->z>=gcfg->maxidx.z){
+                  *mediaid=0;
+              }else{
+                  *mediaid=media[*idx1d];
+              }
+
+          }else if(gcfg->srctype==MCX_SRC_CONE || gcfg->srctype==MCX_SRC_ISOTROPIC || gcfg->srctype==MCX_SRC_ARCSINE){
+
+              // Uniform point picking on a sphere 
+              // http://mathworld.wolfram.com/SpherePointPicking.html
+              float ang,stheta,ctheta,sphi,cphi;
+              ang=TWO_PI*rand_uniform01(t); //next arimuth angle
+              sincosf(ang,&sphi,&cphi);
+              if(gcfg->srctype==MCX_SRC_CONE){  // a solid-angle section of a uniform sphere
+                  do{
+                      ang=(gcfg->srcparam1.y>0) ? TWO_PI*rand_uniform01(t) : acosf(2.f*rand_uniform01(t)-1.f); //sine distribution
+                  }while(ang>gcfg->srcparam1.x);
+              }else{
+                  if(gcfg->srctype==MCX_SRC_ISOTROPIC) // uniform sphere
+                      ang=acosf(2.f*rand_uniform01(t)-1.f); //sine distribution
+                  else
+                      ang=ONE_PI*rand_uniform01(t); //uniform distribution in zenith angle, arcsine
+              }
+              sincosf(ang,&stheta,&ctheta);
+              rotatevector(v,stheta,ctheta,sphi,cphi);
+              f->pathlen=0.f;
+
+
+          }else if(gcfg->srctype==MCX_SRC_ZGAUSSIAN){
+
+              float ang,stheta,ctheta,sphi,cphi;
+              ang=TWO_PI*rand_uniform01(t); //next arimuth angle
+              sincosf(ang,&sphi,&cphi);
+              ang=sqrtf(-2.f*logf(rand_uniform01(t)))*(1.f-2.f*rand_uniform01(t))*gcfg->srcparam1.x;
+              sincosf(ang,&stheta,&ctheta);
+              rotatevector(v,stheta,ctheta,sphi,cphi);
+              f->pathlen=0.f;
+
+          }else if(gcfg->srctype==MCX_SRC_LINE || gcfg->srctype==MCX_SRC_SLIT){
+
+
+              float r=rand_uniform01(t);
+              *((float4*)p)=float4(p->x+r*gcfg->srcparam1.x,
+                      p->y+r*gcfg->srcparam1.y,
+                      p->z+r*gcfg->srcparam1.z,
+                      p->w);
+              if(gcfg->srctype==MCX_SRC_LINE){
+                  float s,q;
+                  r=1.f-2.f*rand_uniform01(t);
+                  s=1.f-2.f*rand_uniform01(t);
+                  q=sqrt(1.f-v->x*v->x-v->y*v->y)*(rand_uniform01(t)>0.5f ? 1.f : -1.f);
+                  *((float4*)v)=float4(v->y*q-v->z*s,v->z*r-v->x*q,v->x*s-v->y*r,v->nscat);
+              }
+              *rv=float3(rv->x+(gcfg->srcparam1.x)*0.5f,
+                      rv->y+(gcfg->srcparam1.y)*0.5f,
+                      rv->z+(gcfg->srcparam1.z)*0.5f);
+              f->pathlen=(gcfg->srctype==MCX_SRC_SLIT)?-1.f:0.f;
+
+          }
+
           if(f->pathlen<0.f){
-	    if(gcfg->c0.w!=0.f){
-	        float Rn2=(gcfg->c0.w > 0.f) - (gcfg->c0.w < 0.f);
-	        rv->x+=gcfg->c0.w*v->x;
-		rv->y+=gcfg->c0.w*v->y;
-		rv->z+=gcfg->c0.w*v->z;
-                v->x=Rn2*(rv->x-p->x);
-                v->y=Rn2*(rv->y-p->y);
-                v->z=Rn2*(rv->z-p->z);
-		Rn2=rsqrtf(v->x*v->x+v->y*v->y+v->z*v->z); // normalize
-                v->x*=Rn2;
-                v->y*=Rn2;
-                v->z*=Rn2;
-	    }else if(__float_as_int(gcfg->c0.w)==0x80000000){ // isotropic if focal length is -0.f
-                float ang,stheta,ctheta,sphi,cphi;
-                ang=TWO_PI*rand_uniform01(t); //next arimuth angle
-                sincosf(ang,&sphi,&cphi);
-                ang=acosf(2.f*rand_uniform01(t)-1.f); //sine distribution
-                sincosf(ang,&stheta,&ctheta);
-                rotatevector(v,stheta,ctheta,sphi,cphi);
-	    }
-	  }
+              if(gcfg->c0.w!=0.f){
+                  float Rn2=(gcfg->c0.w > 0.f) - (gcfg->c0.w < 0.f);
+                  rv->x+=gcfg->c0.w*v->x;
+                  rv->y+=gcfg->c0.w*v->y;
+                  rv->z+=gcfg->c0.w*v->z;
+                  v->x=Rn2*(rv->x-p->x);
+                  v->y=Rn2*(rv->y-p->y);
+                  v->z=Rn2*(rv->z-p->z);
+                  Rn2=rsqrtf(v->x*v->x+v->y*v->y+v->z*v->z); // normalize
+                  v->x*=Rn2;
+                  v->y*=Rn2;
+                  v->z*=Rn2;
+              }else if(__float_as_int(gcfg->c0.w)==0x80000000){ // isotropic if focal length is -0.f
+                  float ang,stheta,ctheta,sphi,cphi;
+                  ang=TWO_PI*rand_uniform01(t); //next arimuth angle
+                  sincosf(ang,&sphi,&cphi);
+                  ang=acosf(2.f*rand_uniform01(t)-1.f); //sine distribution
+                  sincosf(ang,&stheta,&ctheta);
+                  rotatevector(v,stheta,ctheta,sphi,cphi);
+              }
+          }
 
-          /**
-           * Compute the reciprocal of the velocity vector
-           */
           *rv=float3(__fdividef(1.f,v->x),__fdividef(1.f,v->y),__fdividef(1.f,v->z));
 
-          /**
-           * If a photon is launched outside of the box, or inside a zero-voxel, move it until it hits a non-zero voxel
-           */
-	  if((*mediaid & MED_MASK)==0){
-             int idx=skipvoid(p, v, f, rv, media); /** specular reflection of the bbx is taken care of here*/
-             if(idx>=0){
-		 *idx1d=idx;
-		 *mediaid=media[*idx1d];
-	     }
-	  }
-	  *w0+=1.f;
-	  
-	  /**
-           * if launch attempted for over 1000 times, stop trying and return
-           */
-	  if(*w0>gcfg->maxvoidstep)
-	     return -1;  // launch failed
-      }while((*mediaid & MED_MASK)==0 || p->w<=gcfg->minenergy);
+          if((*mediaid & MED_MASK)==0){
+              int idx=skipvoid(p, v, f, rv, media); 
+              if(idx>=0){
+                  *idx1d=idx;
+                  *mediaid=media[*idx1d];
+              }
+          }
+          *w0+=1.f;
+
+          if(*w0>gcfg->maxvoidstep)
+              return -1;  // launch failed
+
+        }while((*mediaid & MED_MASK)==0 || p->w<=gcfg->minenergy);
+
+
       
       /**
        * Now a photon is successfully launched, perform necssary initialization for a new trajectory
@@ -955,7 +936,7 @@ kernel void mcx_test_rng(float field[],uint n_seed[]){
  * @param[in,out] gprogress: pointer to the host variable to update progress bar
  */
 
-template <int mcxsource>
+
 kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed[],
      float4 n_pos[],float4 n_dir[],float4 n_len[],float n_det[], uint detectedphoton[], 
      float srcpattern[],float replayweight[],float photontof[],int photondetid[], 
@@ -996,15 +977,16 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
 
      gpu_rng_init(t,n_seed,idx);
 
-     if(launchnewphoton<mcxsource>(&p,&v,&f,&rv,&prop,&idx1d,field,&mediaid,&w0,0,ppath,&energyloss,
-       &energylaunched,n_det,detectedphoton,t,(RandType*)(sharedmem+(blockDim.x<<2)+threadIdx.x*gcfg->issaveseed*(RAND_BUF_LEN*(sizeof(RandType)<<2))),media,srcpattern,
-       idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress)){
+     if(launchnewphoton(&p,&v,&f,&rv,&prop,&idx1d,field,&mediaid,&w0,0,ppath,&energyloss,
+                 &energylaunched,n_det,detectedphoton,t,(RandType*)(sharedmem+(blockDim.x<<2)+threadIdx.x*gcfg->issaveseed*(RAND_BUF_LEN*(sizeof(RandType)<<2))),media,srcpattern,
+                 idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress)){
          GPUDEBUG(("thread %d: fail to launch photon\n",idx));
-	 n_pos[idx]=*((float4*)(&p));
-	 n_dir[idx]=*((float4*)(&v));
-	 n_len[idx]=*((float4*)(&f));
+         n_pos[idx]=*((float4*)(&p));
+         n_dir[idx]=*((float4*)(&v));
+         n_len[idx]=*((float4*)(&f));
          return;
      }
+
      rv=float3(__fdividef(1.f,v.x),__fdividef(1.f,v.y),__fdividef(1.f,v.z));
      isdet=mediaid & DET_MASK;
      mediaid &= MED_MASK; // keep isdet to 0 to avoid launching photon ina 
@@ -1221,14 +1203,16 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
                  GPUDEBUG(("cylic boundary condition, moving photon in dir %d at %d flag, new pos=[%f %f %f]\n",flipdir,idx1d,p.x,p.y,p.z));
 	         continue;
 	      }
-              GPUDEBUG(("direct relaunch at idx=[%d] mediaid=[%d], ref=[%d]\n",idx1d,mediaid,gcfg->doreflect));
-	      if(launchnewphoton<mcxsource>(&p,&v,&f,&rv,&prop,&idx1d,field,&mediaid,&w0,(mediaidold & DET_MASK),ppath,
-	          &energyloss,&energylaunched,n_det,detectedphoton,t,(RandType*)(sharedmem+(blockDim.x<<2)+threadIdx.x*gcfg->issaveseed*(RAND_BUF_LEN*(sizeof(RandType)<<2))),
-		  media,srcpattern,idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress))
-                   break;
-              isdet=mediaid & DET_MASK;
-              mediaid &= MED_MASK;
-	      continue;
+
+          GPUDEBUG(("direct relaunch at idx=[%d] mediaid=[%d], ref=[%d]\n",idx1d,mediaid,gcfg->doreflect));
+          if(launchnewphoton(&p,&v,&f,&rv,&prop,&idx1d,field,&mediaid,&w0,(mediaidold & DET_MASK),ppath,
+                      &energyloss,&energylaunched,n_det,detectedphoton,t,(RandType*)(sharedmem+(blockDim.x<<2)+threadIdx.x*gcfg->issaveseed*(RAND_BUF_LEN*(sizeof(RandType)<<2))),
+                      media,srcpattern,idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress)) {
+              break;
+          }
+          isdet=mediaid & DET_MASK;
+          mediaid &= MED_MASK;
+          continue;
 	  }
 
           /** perform Russian Roulette*/
@@ -1236,11 +1220,12 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
                 if(rand_do_roulette(t)*ROULETTE_SIZE<=1.f)
                    p.w*=ROULETTE_SIZE;
                 else{
-                   GPUDEBUG(("relaunch after Russian roulette at idx=[%d] mediaid=[%d], ref=[%d]\n",idx1d,mediaid,gcfg->doreflect));
-                   if(launchnewphoton<mcxsource>(&p,&v,&f,&rv,&prop,&idx1d,field,&mediaid,&w0,(mediaidold & DET_MASK),ppath,
-	                &energyloss,&energylaunched,n_det,detectedphoton,t,(RandType*)(sharedmem+(blockDim.x<<2)+threadIdx.x*gcfg->issaveseed*(RAND_BUF_LEN*(sizeof(RandType)<<2))),
-			media,srcpattern,idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress))
+                    GPUDEBUG(("relaunch after Russian roulette at idx=[%d] mediaid=[%d], ref=[%d]\n",idx1d,mediaid,gcfg->doreflect));
+                    if(launchnewphoton(&p,&v,&f,&rv,&prop,&idx1d,field,&mediaid,&w0,(mediaidold & DET_MASK),ppath,
+                                &energyloss,&energylaunched,n_det,detectedphoton,t,(RandType*)(sharedmem+(blockDim.x<<2)+threadIdx.x*gcfg->issaveseed*(RAND_BUF_LEN*(sizeof(RandType)<<2))),
+                                media,srcpattern,idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress)) {
                         break;
+                    }
                    isdet=mediaid & DET_MASK;
                    mediaid &= MED_MASK;
                    continue;
@@ -1276,10 +1261,11 @@ kernel void mcx_main_loop(uint media[],float field[],float genergy[],uint n_seed
                         transmit(&v,n1,prop.n,flipdir);
                         if(mediaid==0){ // transmission to external boundary
                             GPUDEBUG(("transmit to air, relaunch\n"));
-		    	    if(launchnewphoton<mcxsource>(&p,&v,&f,&rv,&prop,&idx1d,field,&mediaid,&w0,(mediaidold & DET_MASK),
-			        ppath,&energyloss,&energylaunched,n_det,detectedphoton,t,(RandType*)(sharedmem+(blockDim.x<<2)+threadIdx.x*gcfg->issaveseed*(RAND_BUF_LEN*(sizeof(RandType)<<2))),
-				media,srcpattern,idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress))
+                            if(launchnewphoton(&p,&v,&f,&rv,&prop,&idx1d,field,&mediaid,&w0,(mediaidold & DET_MASK),
+                                        ppath,&energyloss,&energylaunched,n_det,detectedphoton,t,(RandType*)(sharedmem+(blockDim.x<<2)+threadIdx.x*gcfg->issaveseed*(RAND_BUF_LEN*(sizeof(RandType)<<2))),
+                                        media,srcpattern,idx,(RandType*)n_seed,seeddata,gdebugdata,gprogress)) {
                                 break;
+                            }
                             isdet=mediaid & DET_MASK;
                             mediaid &= MED_MASK;
 			    continue;
@@ -1871,24 +1857,7 @@ void mcx_run_simulation(Config *cfg,GPUInfo *gpu){
            MCX_FPRINTF(cfg->flog,"simulation run#%2d ... \n",iter+1); fflush(cfg->flog);
            mcx_flush(cfg);
 
-	   switch(cfg->srctype) {
-		case(MCX_SRC_PENCIL): mcx_main_loop<MCX_SRC_PENCIL> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_ISOTROPIC): mcx_main_loop<MCX_SRC_ISOTROPIC> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_CONE): mcx_main_loop<MCX_SRC_CONE> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_GAUSSIAN): mcx_main_loop<MCX_SRC_GAUSSIAN> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_PLANAR): mcx_main_loop<MCX_SRC_PLANAR> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_PATTERN): mcx_main_loop<MCX_SRC_PATTERN> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_FOURIER): mcx_main_loop<MCX_SRC_FOURIER> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_ARCSINE): mcx_main_loop<MCX_SRC_ARCSINE> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_DISK): mcx_main_loop<MCX_SRC_DISK> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_FOURIERX): mcx_main_loop<MCX_SRC_FOURIERX> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_FOURIERX2D): mcx_main_loop<MCX_SRC_FOURIERX2D> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_ZGAUSSIAN): mcx_main_loop<MCX_SRC_ZGAUSSIAN> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_LINE): mcx_main_loop<MCX_SRC_LINE> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_SLIT): mcx_main_loop<MCX_SRC_SLIT> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_PENCILARRAY): mcx_main_loop<MCX_SRC_PENCILARRAY> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-		case(MCX_SRC_PATTERN3D): mcx_main_loop<MCX_SRC_PATTERN3D> <<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress); break;
-	   }
+           mcx_main_loop<<<mcgrid,mcblock,sharedbuf>>>(gmedia,gfield,genergy,gPseed,gPpos,gPdir,gPlen,gPdet,gdetected,gsrcpattern,greplayw,greplaytof,greplaydetid,gseeddata,gdebugdata,gprogress);
 
 #pragma omp master
 {
