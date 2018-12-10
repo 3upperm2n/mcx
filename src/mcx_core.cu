@@ -252,6 +252,7 @@ __device__ inline float mcx_nextafterf(float a, int dir){
 __device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,int *id){
       float dist;
 
+
       ///< time-of-flight to hit the wall in each direction
       htime[0]=fabs((floorf(p0->x)+(v->x>0.f)-p0->x)*rv[0]); ///< time-of-flight in x
       htime[1]=fabs((floorf(p0->y)+(v->y>0.f)-p0->y)*rv[1]);
@@ -266,12 +267,20 @@ __device__ inline float hitgrid(float3 *p0, float3 *v, float *htime,float* rv,in
       htime[1]=p0->y+dist*v->y;
       htime[2]=p0->z+dist*v->z;
 
+	  /*
       ///< make sure the intersection point htime is immediately outside of the current voxel (i.e. not within the current voxel)
       int index = (*id & (int)3); 
 
       if(index == 0) htime[0] = mcx_nextafterf(roundf(htime[0]), (v->x > 0.f)-(v->x < 0.f));
       if(index == 1) htime[1] = mcx_nextafterf(roundf(htime[1]), (v->y > 0.f)-(v->y < 0.f));
       if(index == 2) htime[2] = mcx_nextafterf(roundf(htime[2]), (v->z > 0.f)-(v->z < 0.f));
+	  */
+
+	  (*id==0) ?
+		  (htime[0] = mcx_nextafterf(roundf(htime[0]), (v->x > 0.f)-(v->x < 0.f))) :
+		  ((*id==1) ? 
+		   (htime[1] = mcx_nextafterf(roundf(htime[1]), (v->y > 0.f)-(v->y < 0.f))) :
+		   (htime[2] = mcx_nextafterf(roundf(htime[2]), (v->z > 0.f)-(v->z < 0.f))) );
 
       return dist;
 }
